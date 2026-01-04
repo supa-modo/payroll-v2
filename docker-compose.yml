@@ -1,0 +1,46 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: payroll_v2_postgres
+    environment:
+      POSTGRES_USER: payroll
+      POSTGRES_PASSWORD: payroll123
+      POSTGRES_DB: payroll_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payroll -d payroll_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: payroll_v2_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Mailhog for email testing
+  mailhog:
+    image: mailhog/mailhog
+    container_name: payroll_v2_mailhog
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+    logging:
+      driver: none
+
+volumes:
+  postgres_data:
+  redis_data:

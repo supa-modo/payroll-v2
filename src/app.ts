@@ -36,6 +36,10 @@ import loanRoutes from "./routes/loans";
 import loanRepaymentRoutes from "./routes/loanRepayments";
 import reportRoutes from "./routes/reports";
 import systemAdminRoutes from "./routes/systemAdmin";
+import auditLogRoutes from "./routes/auditLogs";
+import notificationRoutes from "./routes/notifications";
+import settingsRoutes from "./routes/settings";
+import dataChangeHistoryRoutes from "./routes/dataChangeHistory";
 
 /**
  * Create and configure Express application
@@ -147,6 +151,10 @@ export function createApp(): Application {
   app.use("/api/loans/:loanId/repayments", loanRepaymentRoutes);
   app.use("/api/reports", reportRoutes);
   app.use("/api/system-admin", systemAdminRoutes);
+  app.use("/api/audit-logs", auditLogRoutes);
+  app.use("/api/notifications", notificationRoutes);
+  app.use("/api/settings", settingsRoutes);
+  app.use("/api/data-change-history", dataChangeHistoryRoutes);
 
   // 404 handler
   app.use(notFoundHandler);

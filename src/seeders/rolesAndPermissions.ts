@@ -215,9 +215,16 @@ export async function seedRolesAndPermissions(): Promise<void> {
 
 /**
  * Create tenant-specific Admin role based on system Admin role
+ * @param tenantId - The tenant ID to create the admin role for
+ * @param transaction - Optional transaction to use. If not provided, a new transaction will be created.
  */
-export async function createTenantAdminRole(tenantId: string): Promise<Role> {
-  const transaction = await sequelize.transaction();
+export async function createTenantAdminRole(
+  tenantId: string,
+  transaction?: any
+): Promise<Role> {
+  const shouldCreateTransaction = !transaction;
+  const txn = transaction || (await sequelize.transaction());
+
   try {
     // Find system Admin role
     const systemAdminRole = await Role.findOne({
@@ -226,60 +233,26 @@ export async function createTenantAdminRole(tenantId: string): Promise<Role> {
         tenantId: null,
         isSystemRole: true,
       },
-      transaction,
+      transaction: txn,
     });
 
     if (!systemAdminRole) {
       // If system Admin role doesn't exist, create it first
-      await seedRolesAndPermissions();
-      const refreshedSystemAdminRole = await Role.findOne({
-        where: {
-          name: "Admin",
-          tenantId: null,
-          isSystemRole: true,
-        },
-        transaction,
-      });
-      if (!refreshedSystemAdminRole) {
-        throw new Error("Failed to create system Admin role");
+      // Note: seedRolesAndPermissions doesn't use transactions, so we need to handle this carefully
+      // If we're in a transaction, we can't call seedRolesAndPermissions which commits its own transaction
+      // So we'll just throw an error and let the caller handle it
+      if (shouldCreateTransaction) {
+        await txn.rollback();
       }
-      // Get all permissions (permissions are system-wide, no tenantId)
-      const allPermissions = await Permission.findAll({
-        transaction,
-      });
-
-      // Create tenant-specific Admin role
-      const tenantAdminRole = await Role.create(
-        {
-          name: "Admin",
-          displayName: "Administrator",
-          description: "Full system access for this tenant",
-          tenantId,
-          isSystemRole: false,
-        },
-        { transaction }
+      throw new Error(
+        "System Admin role does not exist. Please run seedRolesAndPermissions first."
       );
-
-      // Assign all permissions to tenant Admin role
-      for (const permission of allPermissions) {
-        await RolePermission.create(
-          {
-            roleId: tenantAdminRole.id,
-            permissionId: permission.id,
-          },
-          { transaction }
-        );
-      }
-
-      await transaction.commit();
-      logger.info(`Created tenant Admin role for tenant ${tenantId}`);
-      return tenantAdminRole;
     }
 
-      // Get all permissions (system Admin should have all)
-      const allPermissions = await Permission.findAll({
-        transaction,
-      });
+    // Get all permissions (permissions are system-wide, no tenantId)
+    const allPermissions = await Permission.findAll({
+      transaction: txn,
+    });
 
     // Create tenant-specific Admin role
     const [tenantAdminRole] = await Role.findOrCreate({
@@ -295,7 +268,7 @@ export async function createTenantAdminRole(tenantId: string): Promise<Role> {
         tenantId,
         isSystemRole: false,
       },
-      transaction,
+      transaction: txn,
     });
 
     // Assign all permissions to tenant Admin role
@@ -309,15 +282,21 @@ export async function createTenantAdminRole(tenantId: string): Promise<Role> {
           roleId: tenantAdminRole.id,
           permissionId: permission.id,
         },
-        transaction,
+        transaction: txn,
       });
     }
 
-    await transaction.commit();
+    // Only commit if we created the transaction
+    if (shouldCreateTransaction) {
+      await txn.commit();
+    }
     logger.info(`Created tenant Admin role for tenant ${tenantId}`);
     return tenantAdminRole;
   } catch (error: any) {
-    await transaction.rollback();
+    // Only rollback if we created the transaction
+    if (shouldCreateTransaction) {
+      await txn.rollback();
+    }
     logger.error("Error creating tenant Admin role:", error);
     throw error;
   }

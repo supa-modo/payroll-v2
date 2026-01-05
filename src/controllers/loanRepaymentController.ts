@@ -5,6 +5,7 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
 import { LoanRepayment, EmployeeLoan, Payroll, Employee } from "../models";
+import { sequelize } from "../config/database";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
 
@@ -66,8 +67,11 @@ export async function createLoanRepayment(
   req: AuthRequest,
   res: Response
 ): Promise<void> {
+  const transaction = await sequelize.transaction();
+
   try {
     if (!req.user) {
+      await transaction.rollback();
       res.status(401).json({ error: "Authentication required" });
       return;
     }
@@ -82,14 +86,17 @@ export async function createLoanRepayment(
         id: loanId,
         tenantId,
       },
+      transaction,
     });
 
     if (!loan) {
+      await transaction.rollback();
       res.status(404).json({ error: "Loan not found" });
       return;
     }
 
     if (loan.status !== "active") {
+      await transaction.rollback();
       res.status(400).json({ error: "Can only record repayments for active loans" });
       return;
     }
@@ -98,11 +105,13 @@ export async function createLoanRepayment(
     const currentBalance = parseFloat(loan.remainingBalance.toString());
 
     if (repaymentAmount <= 0) {
+      await transaction.rollback();
       res.status(400).json({ error: "Repayment amount must be greater than zero" });
       return;
     }
 
     if (repaymentAmount > currentBalance) {
+      await transaction.rollback();
       res.status(400).json({ error: "Repayment amount cannot exceed remaining balance" });
       return;
     }
@@ -110,28 +119,40 @@ export async function createLoanRepayment(
     const balanceAfter = currentBalance - repaymentAmount;
     const newTotalPaid = parseFloat(loan.totalPaid.toString()) + repaymentAmount;
 
-    // Create repayment record
-    const repayment = await LoanRepayment.create({
-      loanId,
-      amount: repaymentAmount,
-      repaymentDate: repaymentDate || new Date().toISOString().split("T")[0],
-      paymentType: "manual",
-      balanceAfter,
-      notes: notes || null,
-      createdBy: req.user.id,
-    });
+    // Create repayment record within transaction
+    const repayment = await LoanRepayment.create(
+      {
+        loanId,
+        amount: repaymentAmount,
+        repaymentDate: repaymentDate || new Date().toISOString().split("T")[0],
+        paymentType: "manual",
+        balanceAfter,
+        notes: notes || null,
+        createdBy: req.user.id,
+      },
+      { transaction }
+    );
 
-    // Update loan
+    // Update loan within transaction
     const updatedStatus = balanceAfter <= 0 ? "completed" : loan.status;
-    await loan.update({
-      remainingBalance: balanceAfter,
-      totalPaid: newTotalPaid,
-      status: updatedStatus,
-      updatedBy: req.user.id,
-    });
+    await loan.update(
+      {
+        remainingBalance: balanceAfter,
+        totalPaid: newTotalPaid,
+        status: updatedStatus,
+        updatedBy: req.user.id,
+      },
+      { transaction }
+    );
+
+    await transaction.commit();
+
+    // Reload loan to get updated data
+    await loan.reload();
 
     res.status(201).json({ repayment, loan });
   } catch (error: any) {
+    await transaction.rollback();
     logger.error("Create loan repayment error:", error);
     res.status(500).json({ error: "Failed to create loan repayment" });
   }

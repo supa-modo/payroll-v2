@@ -10,6 +10,7 @@ import { sequelize } from "../config/database";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
 import bcrypt from "bcryptjs";
+import { trackChange } from "../services/dataChangeHistoryService";
 
 /**
  * Get all employees for tenant
@@ -366,8 +367,11 @@ export async function updateEmployee(
   req: AuthRequest,
   res: Response
 ): Promise<void> {
+  const transaction = await sequelize.transaction();
+
   try {
     if (!req.user) {
+      await transaction.rollback();
       res.status(401).json({ error: "Authentication required" });
       return;
     }
@@ -417,9 +421,11 @@ export async function updateEmployee(
 
     const employee = await Employee.findOne({
       where: { id, tenantId },
+      transaction,
     });
 
     if (!employee) {
+      await transaction.rollback();
       res.status(404).json({ error: "Employee not found" });
       return;
     }
@@ -432,8 +438,10 @@ export async function updateEmployee(
           employeeNumber,
           id: { [Op.ne]: id },
         },
+        transaction,
       });
       if (existing) {
+        await transaction.rollback();
         res.status(409).json({
           error: "Employee with this employee number already exists",
         });
@@ -445,8 +453,10 @@ export async function updateEmployee(
     if (departmentId) {
       const department = await Department.findOne({
         where: { id: departmentId, tenantId },
+        transaction,
       });
       if (!department) {
+        await transaction.rollback();
         res.status(404).json({ error: "Department not found" });
         return;
       }
@@ -505,8 +515,40 @@ export async function updateEmployee(
     if (emergencyContactPhone !== undefined) sanitizedData.emergencyContactPhone = toNullIfEmpty(emergencyContactPhone);
     if (emergencyContactRelationship !== undefined) sanitizedData.emergencyContactRelationship = toNullIfEmpty(emergencyContactRelationship);
 
-    await employee.update(sanitizedData);
+    // Track changes for sensitive fields within transaction
+    const fieldsToTrack = [
+      "status",
+      "jobTitle",
+      "jobGrade",
+      "employmentType",
+      "hireDate",
+      "terminationDate",
+      "departmentId",
+    ];
 
+    for (const field of fieldsToTrack) {
+      if (sanitizedData[field] !== undefined && employee.get(field) !== sanitizedData[field]) {
+        await trackChange(
+          {
+            tenantId,
+            entityType: "Employee",
+            entityId: employee.id,
+            fieldName: field,
+            oldValue: employee.get(field),
+            newValue: sanitizedData[field],
+            changedBy: req.user.id,
+          },
+          transaction
+        );
+      }
+    }
+
+    // Update employee within transaction
+    await employee.update(sanitizedData, { transaction });
+
+    await transaction.commit();
+
+    // Reload employee with relations after commit
     const updatedEmployee = await Employee.findByPk(employee.id, {
       include: [
         {
@@ -520,6 +562,7 @@ export async function updateEmployee(
 
     res.json({ employee: updatedEmployee });
   } catch (error: any) {
+    await transaction.rollback();
     logger.error("Update employee error:", error);
     if (error.name === "SequelizeUniqueConstraintError") {
       res.status(409).json({

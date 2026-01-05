@@ -5,6 +5,7 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
 import { PayrollPeriod, Payroll, Employee, LoanRepayment } from "../models";
+import { sequelize } from "../config/database";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
@@ -229,8 +230,11 @@ export async function processPayrollPeriod(
   req: AuthRequest,
   res: Response
 ): Promise<void> {
+  const transaction = await sequelize.transaction();
+
   try {
     if (!req.user) {
+      await transaction.rollback();
       res.status(401).json({ error: "Authentication required" });
       return;
     }
@@ -243,23 +247,29 @@ export async function processPayrollPeriod(
         id,
         tenantId,
       },
+      transaction,
     });
 
     if (!period) {
+      await transaction.rollback();
       res.status(404).json({ error: "Payroll period not found" });
       return;
     }
 
     if (period.status !== "draft" && period.status !== "pending_approval") {
+      await transaction.rollback();
       res.status(400).json({ error: "Period cannot be processed in current status" });
       return;
     }
 
-    // Update status to processing
-    await period.update({
-      status: "processing",
-      processedBy: req.user.id,
-    });
+    // Update status to processing within transaction
+    await period.update(
+      {
+        status: "processing",
+        processedBy: req.user.id,
+      },
+      { transaction }
+    );
 
     // Get all active employees for the tenant
     const employees = await Employee.findAll({
@@ -267,44 +277,49 @@ export async function processPayrollPeriod(
         tenantId,
         status: "active",
       },
+      transaction,
     });
 
     let totalGross = 0;
     let totalDeductions = 0;
     let totalNet = 0;
 
-    // Process payroll for each employee
+    // Process payroll for each employee within transaction
     for (const employee of employees) {
-      try {
-        const calculation = await calculateEmployeePayroll(
-          employee,
-          new Date(period.startDate),
-          new Date(period.endDate)
-        );
+      const calculation = await calculateEmployeePayroll(
+        employee,
+        new Date(period.startDate),
+        new Date(period.endDate)
+      );
 
-        // Check if payroll already exists
-        let payroll = await Payroll.findOne({
-          where: {
-            payrollPeriodId: period.id,
-            employeeId: employee.id,
+      // Check if payroll already exists
+      let payroll = await Payroll.findOne({
+        where: {
+          payrollPeriodId: period.id,
+          employeeId: employee.id,
+        },
+        transaction,
+      });
+
+      if (payroll) {
+        // Update existing payroll within transaction
+        await payroll.update(
+          {
+            grossPay: calculation.grossPay,
+            totalEarnings: calculation.grossPay,
+            totalDeductions: calculation.totalDeductions,
+            netPay: calculation.netPay,
+            payeAmount: calculation.statutoryDeductions.paye,
+            nssfAmount: calculation.statutoryDeductions.nssf,
+            nhifAmount: calculation.statutoryDeductions.nhif,
+            status: "calculated",
           },
-        });
-
-        if (payroll) {
-          // Update existing payroll
-          await payroll.update({
-            grossPay: calculation.grossPay,
-            totalEarnings: calculation.grossPay,
-            totalDeductions: calculation.totalDeductions,
-            netPay: calculation.netPay,
-            payeAmount: calculation.statutoryDeductions.paye,
-            nssfAmount: calculation.statutoryDeductions.nssf,
-            nhifAmount: calculation.statutoryDeductions.nhif,
-            status: "pending",
-          });
-        } else {
-          // Create new payroll
-          payroll = await Payroll.create({
+          { transaction }
+        );
+      } else {
+        // Create new payroll within transaction
+        payroll = await Payroll.create(
+          {
             payrollPeriodId: period.id,
             employeeId: employee.id,
             grossPay: calculation.grossPay,
@@ -314,32 +329,35 @@ export async function processPayrollPeriod(
             payeAmount: calculation.statutoryDeductions.paye,
             nssfAmount: calculation.statutoryDeductions.nssf,
             nhifAmount: calculation.statutoryDeductions.nhif,
-            status: "pending",
-          });
+            status: "calculated",
+          },
+          { transaction }
+        );
+      }
+
+      // Process loan repayments within transaction
+      const activeLoans = await getActiveLoansForPeriod(
+        employee.id,
+        new Date(period.startDate),
+        new Date(period.endDate)
+      );
+
+      for (const loan of activeLoans) {
+        const monthlyDeduction = parseFloat(loan.monthlyDeduction.toString());
+        const remainingBalance = parseFloat(loan.remainingBalance.toString());
+
+        if (remainingBalance <= 0) {
+          continue; // Skip fully paid loans
         }
 
-        // Process loan repayments
-        const activeLoans = await getActiveLoansForPeriod(
-          employee.id,
-          new Date(period.startDate),
-          new Date(period.endDate)
-        );
+        // Calculate deduction amount (monthly deduction or remaining balance, whichever is smaller)
+        const deductionAmount = Math.min(monthlyDeduction, remainingBalance);
+        const newBalance = remainingBalance - deductionAmount;
+        const newTotalPaid = parseFloat(loan.totalPaid.toString()) + deductionAmount;
 
-        for (const loan of activeLoans) {
-          const monthlyDeduction = parseFloat(loan.monthlyDeduction.toString());
-          const remainingBalance = parseFloat(loan.remainingBalance.toString());
-
-          if (remainingBalance <= 0) {
-            continue; // Skip fully paid loans
-          }
-
-          // Calculate deduction amount (monthly deduction or remaining balance, whichever is smaller)
-          const deductionAmount = Math.min(monthlyDeduction, remainingBalance);
-          const newBalance = remainingBalance - deductionAmount;
-          const newTotalPaid = parseFloat(loan.totalPaid.toString()) + deductionAmount;
-
-          // Create repayment record
-          await LoanRepayment.create({
+        // Create repayment record within transaction
+        await LoanRepayment.create(
+          {
             loanId: loan.id,
             payrollId: payroll.id,
             amount: deductionAmount,
@@ -348,36 +366,45 @@ export async function processPayrollPeriod(
             balanceAfter: newBalance,
             notes: `Automatic deduction from payroll period ${period.name}`,
             createdBy: req.user.id,
-          });
+          },
+          { transaction }
+        );
 
-          // Update loan
-          const updatedStatus = newBalance <= 0 ? "completed" : "active";
-          await loan.update({
+        // Update loan within transaction
+        const updatedStatus = newBalance <= 0 ? "completed" : "active";
+        await loan.update(
+          {
             remainingBalance: newBalance,
             totalPaid: newTotalPaid,
             status: updatedStatus,
             updatedBy: req.user.id,
-          });
-        }
-
-        totalGross += calculation.grossPay;
-        totalDeductions += calculation.totalDeductions;
-        totalNet += calculation.netPay;
-      } catch (error: any) {
-        logger.error(`Error processing payroll for employee ${employee.id}:`, error);
-        // Continue with next employee
+          },
+          { transaction }
+        );
       }
+
+      totalGross += calculation.grossPay;
+      totalDeductions += calculation.totalDeductions;
+      totalNet += calculation.netPay;
     }
 
-    // Update period totals
-    await period.update({
-      status: "pending_approval",
-      totalEmployees: employees.length,
-      totalGross,
-      totalDeductions,
-      totalNet,
-      processedAt: new Date(),
-    });
+    // Update period totals within transaction
+    await period.update(
+      {
+        status: "pending_approval",
+        totalEmployees: employees.length,
+        totalGross,
+        totalDeductions,
+        totalNet,
+        processedAt: new Date(),
+      },
+      { transaction }
+    );
+
+    await transaction.commit();
+
+    // Reload period to get updated data
+    await period.reload();
 
     res.json({
       message: "Payroll processed successfully",
@@ -390,6 +417,7 @@ export async function processPayrollPeriod(
       },
     });
   } catch (error: any) {
+    await transaction.rollback();
     logger.error("Process payroll period error:", error);
     res.status(500).json({ error: "Failed to process payroll period" });
   }

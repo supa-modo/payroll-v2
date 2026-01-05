@@ -5,6 +5,7 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
 import { Employee, EmployeeBankDetails } from "../models";
+import { sequelize } from "../config/database";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
@@ -59,8 +60,11 @@ export async function createBankDetails(
   req: AuthRequest,
   res: Response
 ): Promise<void> {
+  const transaction = await sequelize.transaction();
+
   try {
     if (!req.user) {
+      await transaction.rollback();
       res.status(401).json({ error: "Authentication required" });
       return;
     }
@@ -85,14 +89,16 @@ export async function createBankDetails(
         id: employeeId,
         tenantId,
       },
+      transaction,
     });
 
     if (!employee) {
+      await transaction.rollback();
       res.status(404).json({ error: "Employee not found" });
       return;
     }
 
-    // If setting as primary, unset other primary records
+    // If setting as primary, unset other primary records within transaction
     if (isPrimary) {
       await EmployeeBankDetails.update(
         { isPrimary: false },
@@ -101,26 +107,34 @@ export async function createBankDetails(
             employeeId,
             isPrimary: true,
           },
+          transaction,
         }
       );
     }
 
-    const bankDetails = await EmployeeBankDetails.create({
-      employeeId,
-      paymentMethod,
-      isPrimary: isPrimary || false,
-      bankName,
-      bankBranch,
-      accountNumber,
-      accountName,
-      swiftCode,
-      mpesaPhone,
-      mpesaName,
-      createdBy: req.user.id,
-    });
+    // Create bank details within transaction
+    const bankDetails = await EmployeeBankDetails.create(
+      {
+        employeeId,
+        paymentMethod,
+        isPrimary: isPrimary || false,
+        bankName,
+        bankBranch,
+        accountNumber,
+        accountName,
+        swiftCode,
+        mpesaPhone,
+        mpesaName,
+        createdBy: req.user.id,
+      },
+      { transaction }
+    );
+
+    await transaction.commit();
 
     res.status(201).json({ bankDetails });
   } catch (error: any) {
+    await transaction.rollback();
     logger.error("Create bank details error:", error);
     res.status(500).json({ error: "Failed to create bank details" });
   }

@@ -8,6 +8,7 @@ import { Expense, ExpenseCategory, Employee, Department, ExpenseApproval } from 
 import { Op } from "sequelize";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
+import { trackChange } from "../services/dataChangeHistoryService";
 
 /**
  * Generate unique expense number
@@ -383,6 +384,23 @@ export async function updateExpense(
       amountInBaseCurrency = finalAmount * finalRate;
     }
 
+    // Track changes for sensitive fields
+    const fieldsToTrack = ["amount", "status", "categoryId"];
+    for (const field of fieldsToTrack) {
+      const newValue = req.body[field];
+      if (newValue !== undefined && expense.get(field) !== newValue) {
+        await trackChange({
+          tenantId,
+          entityType: "Expense",
+          entityId: expense.id,
+          fieldName: field,
+          oldValue: expense.get(field),
+          newValue,
+          changedBy: req.user.id,
+        });
+      }
+    }
+
     await expense.update({
       categoryId: categoryId || expense.categoryId,
       departmentId: departmentId !== undefined ? departmentId : expense.departmentId,
@@ -636,6 +654,20 @@ export async function approveExpense(
       nextStatus = "approved";
     }
 
+    // Track status change
+    if (expense.status !== nextStatus) {
+      await trackChange({
+        tenantId,
+        entityType: "Expense",
+        entityId: expense.id,
+        fieldName: "status",
+        oldValue: expense.status,
+        newValue: nextStatus,
+        changedBy: req.user.id,
+        changeReason: comments || "Expense approved",
+      });
+    }
+
     await expense.update({
       status: nextStatus,
     });
@@ -702,6 +734,19 @@ export async function rejectExpense(
       actedAt: new Date(),
     });
 
+    // Track status change
+    const oldStatus = expense.status;
+    await trackChange({
+      tenantId,
+      entityType: "Expense",
+      entityId: expense.id,
+      fieldName: "status",
+      oldValue: oldStatus,
+      newValue: "rejected",
+      changedBy: req.user.id,
+      changeReason: reason || "Expense rejected",
+    });
+
     await expense.update({
       status: "rejected",
       rejectionReason: reason,
@@ -749,6 +794,19 @@ export async function markExpenseAsPaid(
       res.status(400).json({ error: "Expense must be approved before marking as paid" });
       return;
     }
+
+    // Track status change
+    const oldStatus = expense.status;
+    await trackChange({
+      tenantId,
+      entityType: "Expense",
+      entityId: expense.id,
+      fieldName: "status",
+      oldValue: oldStatus,
+      newValue: "paid",
+      changedBy: req.user.id,
+      changeReason: paymentReference ? `Marked as paid - Reference: ${paymentReference}` : "Marked as paid",
+    });
 
     await expense.update({
       status: "paid",

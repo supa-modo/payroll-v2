@@ -16,6 +16,8 @@ interface UserAttributes {
   isEmailVerified: boolean;
   isSystemAdmin: boolean;
   lastLoginAt?: Date;
+  passwordResetToken?: string;
+  passwordResetExpires?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,6 +44,8 @@ class User
   declare isEmailVerified: boolean;
   declare isSystemAdmin: boolean;
   declare lastLoginAt: Date | undefined;
+  declare passwordResetToken: string | undefined;
+  declare passwordResetExpires: Date | undefined;
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
 
@@ -134,6 +138,16 @@ User.init(
       type: DataTypes.DATE,
       allowNull: true,
       field: "last_login_at",
+    },
+    passwordResetToken: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: "password_reset_token",
+    },
+    passwordResetExpires: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: "password_reset_expires",
     },
     createdAt: {
       type: DataTypes.DATE,

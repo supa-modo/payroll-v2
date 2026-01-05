@@ -7,6 +7,7 @@ import { AuthRequest } from "../middleware/auth";
 import { Payroll, PayrollPeriod, Employee, PayrollItem } from "../models";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
+import { trackChange } from "../services/dataChangeHistoryService";
 
 /**
  * Get all payrolls for a period
@@ -161,6 +162,19 @@ export async function updatePayroll(
     if (period.status === "locked" || period.status === "paid") {
       res.status(400).json({ error: "Cannot update payroll for locked or paid period" });
       return;
+    }
+
+    // Track changes
+    if (paymentMethod !== undefined && payroll.paymentMethod !== paymentMethod) {
+      await trackChange({
+        tenantId,
+        entityType: "Payroll",
+        entityId: payroll.id,
+        fieldName: "paymentMethod",
+        oldValue: payroll.paymentMethod,
+        newValue: paymentMethod,
+        changedBy: req.user.id,
+      });
     }
 
     await payroll.update({

@@ -10,6 +10,7 @@ import {
   SalaryComponent,
   SalaryRevisionHistory,
 } from "../models";
+import { sequelize } from "../config/database";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
@@ -110,13 +111,19 @@ export async function getEmployeeSalary(
 
 /**
  * Assign/update salary components for employee
+ * @param transaction - Optional transaction to use for database operations
  */
 export async function assignSalaryComponents(
   req: AuthRequest,
-  res: Response
+  res: Response,
+  transaction?: any
 ): Promise<void> {
+  const shouldManageTransaction = !transaction;
+  const txn = transaction || await sequelize.transaction();
+
   try {
     if (!req.user) {
+      if (shouldManageTransaction) await txn.rollback();
       res.status(401).json({ error: "Authentication required" });
       return;
     }
@@ -131,14 +138,17 @@ export async function assignSalaryComponents(
         id: employeeId,
         tenantId,
       },
+      transaction: txn,
     });
 
     if (!employee) {
+      if (shouldManageTransaction) await txn.rollback();
       res.status(404).json({ error: "Employee not found" });
       return;
     }
 
     if (!Array.isArray(components) || components.length === 0) {
+      if (shouldManageTransaction) await txn.rollback();
       res.status(400).json({ error: "At least one salary component is required" });
       return;
     }
@@ -153,14 +163,16 @@ export async function assignSalaryComponents(
         tenantId,
         isActive: true,
       },
+      transaction: txn,
     });
 
     if (validComponents.length !== componentIds.length) {
+      if (shouldManageTransaction) await txn.rollback();
       res.status(400).json({ error: "One or more salary components are invalid" });
       return;
     }
 
-    // End previous components that are still active
+    // End previous components that are still active within transaction
     await EmployeeSalaryComponent.update(
       {
         effectiveTo: new Date(effectiveDate),
@@ -175,24 +187,28 @@ export async function assignSalaryComponents(
             { effectiveTo: { [Op.gte]: effectiveDate } },
           ],
         },
+        transaction: txn,
       }
     );
 
-    // Create new salary component assignments
+    // Create new salary component assignments within transaction
     const newAssignments = await Promise.all(
       components.map((comp: any) =>
-        EmployeeSalaryComponent.create({
-          employeeId,
-          salaryComponentId: comp.salaryComponentId,
-          amount: comp.amount,
-          effectiveFrom: effectiveDate,
-          effectiveTo: comp.effectiveTo || null,
-          createdBy: req.user?.id || null,
-        })
+        EmployeeSalaryComponent.create(
+          {
+            employeeId,
+            salaryComponentId: comp.salaryComponentId,
+            amount: comp.amount,
+            effectiveFrom: effectiveDate,
+            effectiveTo: comp.effectiveTo || null,
+            createdBy: req.user?.id || null,
+          },
+          { transaction: txn }
+        )
       )
     );
 
-    // Create salary revision history entry
+    // Create salary revision history entry within transaction
     if (reason && req.user) {
       const newGross = components
         .filter((c: any) => {
@@ -201,22 +217,28 @@ export async function assignSalaryComponents(
         })
         .reduce((sum: number, c: any) => sum + parseFloat(c.amount || 0), 0);
 
-      await SalaryRevisionHistory.create({
-        employeeId,
-        revisionDate: new Date(effectiveDate),
-        previousGross: 0, // Could calculate from previous components
-        newGross,
-        reason,
-        componentChanges: {},
-        createdBy: req.user.id,
-      });
+      await SalaryRevisionHistory.create(
+        {
+          employeeId,
+          revisionDate: new Date(effectiveDate),
+          previousGross: 0, // Could calculate from previous components
+          newGross,
+          reason,
+          componentChanges: {},
+          createdBy: req.user.id,
+        },
+        { transaction: txn }
+      );
     }
+
+    if (shouldManageTransaction) await txn.commit();
 
     res.status(201).json({
       message: "Salary components assigned successfully",
       assignments: newAssignments,
     });
   } catch (error: any) {
+    if (shouldManageTransaction) await txn.rollback();
     logger.error("Assign salary components error:", error);
     res.status(500).json({ error: "Failed to assign salary components" });
   }
@@ -279,8 +301,11 @@ export async function createSalaryRevision(
   req: AuthRequest,
   res: Response
 ): Promise<void> {
+  const transaction = await sequelize.transaction();
+
   try {
     if (!req.user) {
+      await transaction.rollback();
       res.status(401).json({ error: "Authentication required" });
       return;
     }
@@ -295,14 +320,17 @@ export async function createSalaryRevision(
         id: employeeId,
         tenantId,
       },
+      transaction,
     });
 
     if (!employee) {
+      await transaction.rollback();
       res.status(404).json({ error: "Employee not found" });
       return;
     }
 
     if (!effectiveFrom || !reason) {
+      await transaction.rollback();
       res.status(400).json({ error: "Effective date and reason are required" });
       return;
     }
@@ -328,6 +356,7 @@ export async function createSalaryRevision(
           required: true,
         },
       ],
+      transaction,
     });
 
     const previousGrossPay = previousComponents
@@ -346,6 +375,7 @@ export async function createSalaryRevision(
           id: { [Op.in]: componentIds },
           tenantId,
         },
+        transaction,
       });
 
       newGrossPay = components
@@ -356,31 +386,39 @@ export async function createSalaryRevision(
         .reduce((sum: number, c: any) => sum + parseFloat(c.amount || 0), 0);
     }
 
-    // Create revision history entry
+    // Create revision history entry within transaction
     const changePercentage =
       previousGrossPay > 0
         ? ((newGrossPay - previousGrossPay) / previousGrossPay) * 100
         : null;
 
-    const revision = await SalaryRevisionHistory.create({
-      employeeId,
-      revisionDate: new Date(effectiveFrom),
-      previousGross: previousGrossPay,
-      newGross: newGrossPay,
-      changePercentage,
-      reason,
-      componentChanges: components || {},
-      createdBy: req.user.id,
-    });
+    const revision = await SalaryRevisionHistory.create(
+      {
+        employeeId,
+        revisionDate: new Date(effectiveFrom),
+        previousGross: previousGrossPay,
+        newGross: newGrossPay,
+        changePercentage,
+        reason,
+        componentChanges: components || {},
+        createdBy: req.user.id,
+      },
+      { transaction }
+    );
 
-    // If components provided, also assign them
+    // If components provided, also assign them using the same transaction
     if (components && Array.isArray(components) && components.length > 0) {
-      await assignSalaryComponents(req, res);
+      // Pass the transaction to assignSalaryComponents
+      await assignSalaryComponents(req, res, transaction);
+      // assignSalaryComponents will handle the response, so we return here
       return;
     }
 
+    await transaction.commit();
+
     res.status(201).json({ revision });
   } catch (error: any) {
+    await transaction.rollback();
     logger.error("Create salary revision error:", error);
     res.status(500).json({ error: "Failed to create salary revision" });
   }

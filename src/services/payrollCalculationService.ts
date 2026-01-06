@@ -39,6 +39,9 @@ export async function calculateGrossPay(
     const periodEndStr = periodEnd.toISOString().split("T")[0];
 
     // Get active salary components for the period
+    // A component is active if:
+    // - It starts before or during the period (effectiveFrom <= periodEnd)
+    // - It hasn't ended before the period starts (effectiveTo IS NULL OR effectiveTo >= periodStart)
     const salaryComponents = await EmployeeSalaryComponent.findAll({
       where: {
         employeeId,
@@ -61,6 +64,10 @@ export async function calculateGrossPay(
       ],
     });
 
+    logger.info(
+      `Found ${salaryComponents.length} earning components for employee ${employeeId} in period ${periodStartStr} to ${periodEndStr}`
+    );
+
     let grossPay = 0;
 
     for (const esc of salaryComponents) {
@@ -69,6 +76,9 @@ export async function calculateGrossPay(
 
       if (component.calculationType === "fixed") {
         grossPay += amount;
+        logger.debug(
+          `Added fixed component ${component.name}: ${amount} (Total: ${grossPay})`
+        );
       } else if (component.calculationType === "percentage") {
         // For percentage calculations, we need the base amount
         // This is a simplified version - in production, you'd need to handle percentageOf references
@@ -78,10 +88,18 @@ export async function calculateGrossPay(
           const baseAmount = component.defaultAmount
             ? parseFloat(component.defaultAmount.toString())
             : amount;
-          grossPay += (baseAmount * component.percentageValue) / 100;
+          const percentageAmount = (baseAmount * component.percentageValue) / 100;
+          grossPay += percentageAmount;
+          logger.debug(
+            `Added percentage component ${component.name}: ${percentageAmount} (${component.percentageValue}% of ${baseAmount}, Total: ${grossPay})`
+          );
         }
       }
     }
+
+    logger.info(
+      `Calculated gross pay for employee ${employeeId}: ${grossPay}`
+    );
 
     return grossPay;
   } catch (error: any) {
@@ -115,6 +133,9 @@ export async function calculateInternalDeductions(
     const periodEndStr = periodEnd.toISOString().split("T")[0];
 
     // Get deduction components
+    // A component is active if:
+    // - It starts before or during the period (effectiveFrom <= periodEnd)
+    // - It hasn't ended before the period starts (effectiveTo IS NULL OR effectiveTo >= periodStart)
     const deductionComponents = await EmployeeSalaryComponent.findAll({
       where: {
         employeeId,
@@ -138,16 +159,33 @@ export async function calculateInternalDeductions(
       ],
     });
 
+    logger.info(
+      `Found ${deductionComponents.length} non-statutory deduction components for employee ${employeeId} in period ${periodStartStr} to ${periodEndStr}`
+    );
+
     let totalDeductions = 0;
 
     for (const esc of deductionComponents) {
+      const component = esc.get("salaryComponent") as SalaryComponent;
       const amount = parseFloat(esc.amount.toString());
       totalDeductions += amount;
+      logger.debug(
+        `Added deduction component ${component.name}: ${amount} (Total: ${totalDeductions})`
+      );
     }
 
     // Calculate loan deductions
     const loanDeductions = await calculateLoanDeductions(employeeId, periodStart, periodEnd);
+    if (loanDeductions > 0) {
+      logger.info(
+        `Loan deductions for employee ${employeeId}: ${loanDeductions}`
+      );
+    }
     totalDeductions += loanDeductions;
+
+    logger.info(
+      `Total internal deductions for employee ${employeeId}: ${totalDeductions}`
+    );
 
     return totalDeductions;
   } catch (error: any) {

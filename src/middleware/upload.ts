@@ -17,18 +17,24 @@ if (!fs.existsSync(uploadsDir)) {
 // Create subdirectories
 const documentsDir = path.join(uploadsDir, "documents");
 const receiptsDir = path.join(uploadsDir, "receipts");
+const photosDir = path.join(uploadsDir, "photos");
 if (!fs.existsSync(documentsDir)) {
   fs.mkdirSync(documentsDir, { recursive: true });
 }
 if (!fs.existsSync(receiptsDir)) {
   fs.mkdirSync(receiptsDir, { recursive: true });
 }
+if (!fs.existsSync(photosDir)) {
+  fs.mkdirSync(photosDir, { recursive: true });
+}
 
 // Configure storage
 const storage = multer.diskStorage({
   destination: (_req: Request, file, cb) => {
     // Determine destination based on field name or type
-    if (file.fieldname === "document" || file.fieldname === "employeeDocument") {
+    if (file.fieldname === "photo" || file.fieldname === "employeePhoto") {
+      cb(null, photosDir);
+    } else if (file.fieldname === "document" || file.fieldname === "employeeDocument") {
       cb(null, documentsDir);
     } else if (file.fieldname === "receipt" || file.fieldname === "expenseDocument") {
       cb(null, receiptsDir);
@@ -82,6 +88,29 @@ export const upload = multer({
   },
 });
 
+// Special uploader for photos with 5MB limit
+export const photoUpload = multer({
+  storage,
+  fileFilter: (_req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+    // Only allow image types for photos
+    const allowedMimes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+    ];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid image type. Allowed types: ${allowedMimes.join(", ")}`));
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit for photos
+  },
+});
+
 // Middleware for single file upload
 export const uploadSingle = (fieldName: string = "file") => {
   return upload.single(fieldName);
@@ -90,6 +119,11 @@ export const uploadSingle = (fieldName: string = "file") => {
 // Middleware for multiple files
 export const uploadMultiple = (fieldName: string = "files", maxCount: number = 10) => {
   return upload.array(fieldName, maxCount);
+};
+
+// Middleware for single photo upload
+export const uploadPhoto = (fieldName: string = "photo") => {
+  return photoUpload.single(fieldName);
 };
 
 // Helper to get file path relative to uploads directory

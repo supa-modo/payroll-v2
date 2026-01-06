@@ -138,8 +138,8 @@ export async function checkPermission(
     req.userPermissions = permissions;
   }
 
-  // Super admin has all permissions
-  if (req.userRoles?.includes("super_admin")) {
+  // Super admin and tenant admin have all permissions
+  if (req.userRoles?.includes("super_admin") || req.userRoles?.includes("admin")) {
     return true;
   }
 
@@ -254,8 +254,8 @@ export function requireAnyPermission(...permissions: string[]) {
         req.userPermissions = permissions;
       }
 
-      // Super admin has all permissions
-      if (req.userRoles?.includes("super_admin")) {
+      // Super admin and tenant admin have all permissions
+      if (req.userRoles?.includes("super_admin") || req.userRoles?.includes("admin")) {
         next();
         return;
       }

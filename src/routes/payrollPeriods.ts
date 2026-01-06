@@ -16,6 +16,7 @@ import {
   approvePayrollPeriod,
   lockPayrollPeriod,
   getPayrollPeriodSummary,
+  deletePayrollPeriod,
 } from "../controllers/payrollPeriodController";
 
 const router = Router();
@@ -103,6 +104,13 @@ router.post(
   "/:id/lock",
   requirePermission("payroll:lock"),
   lockPayrollPeriod
+);
+
+// DELETE /payroll-periods/:id - Delete payroll period
+router.delete(
+  "/:id",
+  requirePermission("payroll:delete"),
+  deletePayrollPeriod
 );
 
 export default router;

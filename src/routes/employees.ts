@@ -7,6 +7,7 @@ import * as employeeController from "../controllers/employeeController";
 import { authenticateToken } from "../middleware/auth";
 import { requirePermission, requireAnyPermission } from "../middleware/rbac";
 import { body, handleValidationErrors } from "../middleware/validator";
+import { uploadPhoto } from "../middleware/upload";
 
 const router = Router();
 
@@ -185,6 +186,18 @@ router.put(
     handleValidationErrors,
   ],
   employeeController.updateEmployee
+);
+
+/**
+ * @route   POST /api/employees/:id/photo
+ * @desc    Upload employee photo
+ * @access  Private
+ */
+router.post(
+  "/:id/photo",
+  requirePermission("employee:update"),
+  uploadPhoto("photo"),
+  employeeController.uploadEmployeePhoto
 );
 
 /**

@@ -12,7 +12,9 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "type-check": "tsc --noEmit",
     "seed:dev": "ts-node src/scripts/seed-dev.ts",
-    "seed:rbac": "ts-node src/scripts/seedRolesAndPermissions.ts"
+    "seed:rbac": "ts-node src/scripts/seedRolesAndPermissions.ts",
+    "migrate:up": "ts-node src/migrations/run.ts up",
+    "migrate:down": "ts-node src/migrations/run.ts down"
   },
   "keywords": [
     "payroll",

@@ -62,8 +62,21 @@ router.post(
       .withMessage("Default amount must be a positive number"),
     body("percentageValue")
       .optional()
-      .isFloat({ min: 0, max: 100 })
-      .withMessage("Percentage value must be between 0 and 100"),
+      .custom((value, { req }) => {
+        const calculationType = req.body.calculationType || "fixed";
+        // Only validate percentage value when calculation type is percentage
+        if (calculationType === "percentage") {
+          if (value === null || value === undefined) {
+            throw new Error("Percentage value is required when calculation type is percentage");
+          }
+          const numValue = parseFloat(value);
+          if (isNaN(numValue) || numValue < 0 || numValue > 100) {
+            throw new Error("Percentage value must be between 0 and 100");
+          }
+        }
+        // When calculation type is fixed, percentageValue can be null or any value
+        return true;
+      }),
     body("isTaxable").optional().isBoolean().withMessage("isTaxable must be a boolean"),
     body("isStatutory").optional().isBoolean().withMessage("isStatutory must be a boolean"),
     body("isActive").optional().isBoolean().withMessage("isActive must be a boolean"),
@@ -112,8 +125,22 @@ router.put(
       .withMessage("Default amount must be a positive number"),
     body("percentageValue")
       .optional()
-      .isFloat({ min: 0, max: 100 })
-      .withMessage("Percentage value must be between 0 and 100"),
+      .custom((value, { req }) => {
+        const calculationType = req.body.calculationType;
+        // Only validate percentage value when calculation type is percentage
+        // If calculationType is not provided in update, check existing component
+        if (calculationType === "percentage") {
+          if (value === null || value === undefined) {
+            throw new Error("Percentage value is required when calculation type is percentage");
+          }
+          const numValue = parseFloat(value);
+          if (isNaN(numValue) || numValue < 0 || numValue > 100) {
+            throw new Error("Percentage value must be between 0 and 100");
+          }
+        }
+        // When calculation type is fixed or not provided, percentageValue can be null or any value
+        return true;
+      }),
     body("isTaxable").optional().isBoolean().withMessage("isTaxable must be a boolean"),
     body("isStatutory").optional().isBoolean().withMessage("isStatutory must be a boolean"),
     body("isActive").optional().isBoolean().withMessage("isActive must be a boolean"),

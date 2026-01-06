@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { createApp } from "./app";
-import { testConnection, sequelize } from "./config/database";
+import { testConnection } from "./config/database";
 import logger from "./utils/logger";
 import "./models"; // Import models to register associations
 
@@ -50,16 +50,6 @@ async function startServer(): Promise<void> {
 
     // Try to connect to database
     const dbConnected = await connectDatabase(3, 5000);
-
-    // Sync models in development
-    if (dbConnected && process.env.NODE_ENV === "development") {
-      try {
-        await sequelize.sync({ alter: true });
-        logger.info("Database models synchronized");
-      } catch (error: any) {
-        logger.warn("Failed to sync models:", error.message);
-      }
-    }
 
     // Create Express app
     const app = createApp();

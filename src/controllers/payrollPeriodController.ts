@@ -4,7 +4,7 @@
 
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
-import { PayrollPeriod, Payroll, Employee, LoanRepayment } from "../models";
+import { PayrollPeriod, Payroll, Employee, LoanRepayment, PayrollItem, Payslip } from "../models";
 import { sequelize } from "../config/database";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
@@ -578,6 +578,97 @@ export async function getPayrollPeriodSummary(
   } catch (error: any) {
     logger.error("Get payroll period summary error:", error);
     res.status(500).json({ error: "Failed to get payroll period summary" });
+  }
+}
+
+/**
+ * Delete payroll period
+ */
+export async function deletePayrollPeriod(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  const transaction = await sequelize.transaction();
+
+  try {
+    if (!req.user) {
+      await transaction.rollback();
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    const tenantId = requireTenantId(req);
+
+    const { id } = req.params;
+
+    const period = await PayrollPeriod.findOne({
+      where: {
+        id,
+        tenantId,
+      },
+      transaction,
+    });
+
+    if (!period) {
+      await transaction.rollback();
+      res.status(404).json({ error: "Payroll period not found" });
+      return;
+    }
+
+    // Only allow deletion of draft periods
+    if (period.status !== "draft") {
+      await transaction.rollback();
+      res.status(400).json({
+        error: "Only draft payroll periods can be deleted",
+      });
+      return;
+    }
+
+    // Get all payrolls for this period
+    const payrolls = await Payroll.findAll({
+      where: {
+        payrollPeriodId: id,
+      },
+      transaction,
+    });
+
+    const payrollIds = payrolls.map((p) => p.id);
+
+    // Delete payslips
+    if (payrollIds.length > 0) {
+      await Payslip.destroy({
+        where: {
+          payrollId: { [Op.in]: payrollIds },
+        },
+        transaction,
+      });
+
+      // Delete payroll items
+      await PayrollItem.destroy({
+        where: {
+          payrollId: { [Op.in]: payrollIds },
+        },
+        transaction,
+      });
+    }
+
+    // Delete payrolls
+    await Payroll.destroy({
+      where: {
+        payrollPeriodId: id,
+      },
+      transaction,
+    });
+
+    // Delete the period
+    await period.destroy({ transaction });
+
+    await transaction.commit();
+
+    res.json({ message: "Payroll period deleted successfully" });
+  } catch (error: any) {
+    await transaction.rollback();
+    logger.error("Delete payroll period error:", error);
+    res.status(500).json({ error: "Failed to delete payroll period" });
   }
 }
 

@@ -11,6 +11,8 @@ import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
 import bcrypt from "bcryptjs";
 import { trackChange } from "../services/dataChangeHistoryService";
+import { getRelativeFilePath, deleteFile } from "../middleware/upload";
+import fs from "fs";
 
 /**
  * Get all employees for tenant
@@ -571,6 +573,81 @@ export async function updateEmployee(
       return;
     }
     res.status(500).json({ error: "Failed to update employee" });
+  }
+}
+
+/**
+ * Upload employee photo
+ */
+export async function uploadEmployeePhoto(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    const tenantId = requireTenantId(req);
+
+    const { id } = req.params;
+
+    if (!req.file) {
+      res.status(400).json({ error: "Photo file is required" });
+      return;
+    }
+
+    // Verify employee belongs to tenant
+    const employee = await Employee.findOne({
+      where: {
+        id,
+        tenantId,
+      },
+    });
+
+    if (!employee) {
+      // Delete uploaded file if employee not found
+      if (req.file.path) {
+        fs.unlinkSync(req.file.path);
+      }
+      res.status(404).json({ error: "Employee not found" });
+      return;
+    }
+
+    // Get relative path for storage
+    const relativePath = getRelativeFilePath(req.file.path);
+
+    // Delete old photo if it exists
+    if (employee.photoUrl) {
+      try {
+        deleteFile(employee.photoUrl);
+      } catch (error) {
+        // Log but don't fail if old photo deletion fails
+        logger.warn("Failed to delete old employee photo:", error);
+      }
+    }
+
+    // Update employee with new photo URL
+    await employee.update({
+      photoUrl: relativePath,
+      updatedBy: req.user.id,
+    });
+
+    // Reload to get updated data
+    await employee.reload();
+
+    res.json({
+      message: "Photo uploaded successfully",
+      employee,
+      photoUrl: relativePath,
+    });
+  } catch (error: any) {
+    // Clean up uploaded file on error
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    logger.error("Upload employee photo error:", error);
+    res.status(500).json({ error: "Failed to upload employee photo" });
   }
 }
 

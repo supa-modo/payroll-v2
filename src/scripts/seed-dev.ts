@@ -5,8 +5,6 @@ import logger from "../utils/logger";
 const seed = async () => {
   try {
     await sequelize.authenticate();
-    // Sync to ensure tables exist
-    await sequelize.sync({ alter: true });
 
     logger.info("🌱 Starting seed...");
 

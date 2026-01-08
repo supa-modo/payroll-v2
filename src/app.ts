@@ -147,6 +147,7 @@ export function createApp(): Application {
   app.use("/api/employees/:employeeId/salary", employeeSalaryRoutes);
   app.use("/api/payroll-periods", payrollPeriodRoutes);
   app.use("/api/payroll-periods/:periodId/payrolls", payrollRoutes);
+  app.use("/api/payrolls", payrollRoutes); // Standalone route for payroll access by ID
   app.use("/api/payslips", payslipRoutes);
   app.use("/api/expense-categories", expenseCategoryRoutes);
   app.use("/api/expenses", expenseRoutes);

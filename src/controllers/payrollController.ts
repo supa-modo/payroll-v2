@@ -25,6 +25,12 @@ export async function getPayrolls(
 
     const { periodId } = req.params;
 
+    // If periodId is not provided (e.g., called from /api/payrolls), return error
+    if (!periodId) {
+      res.status(400).json({ error: "Period ID is required" });
+      return;
+    }
+
     // Verify period belongs to tenant
     const period = await PayrollPeriod.findOne({
       where: {

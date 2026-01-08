@@ -124,6 +124,11 @@ export async function checkPermission(
     return false;
   }
 
+  // System admins have all permissions
+  if (req.user.isSystemAdmin) {
+    return true;
+  }
+
   // Use pre-loaded permissions from auth middleware if available
   if (req.user.permissions) {
     req.userPermissions = req.user.permissions;
@@ -138,8 +143,13 @@ export async function checkPermission(
     req.userPermissions = permissions;
   }
 
-  // Super admin and tenant admin have all permissions
-  if (req.userRoles?.includes("super_admin") || req.userRoles?.includes("admin")) {
+  // Check for admin roles (case-insensitive)
+  // Check both the roles array and the legacy role field
+  const hasAdminRole = req.userRoles?.some(
+    (role) => role.toLowerCase() === "admin" || role.toLowerCase() === "super_admin"
+  ) || req.user.role?.toLowerCase() === "admin";
+
+  if (hasAdminRole) {
     return true;
   }
 
@@ -240,6 +250,12 @@ export function requireAnyPermission(...permissions: string[]) {
         return;
       }
 
+      // System admins have all permissions
+      if (req.user.isSystemAdmin) {
+        next();
+        return;
+      }
+
       // Use pre-loaded permissions from auth middleware if available
       if (req.user.permissions) {
         req.userPermissions = req.user.permissions;
@@ -254,8 +270,13 @@ export function requireAnyPermission(...permissions: string[]) {
         req.userPermissions = permissions;
       }
 
-      // Super admin and tenant admin have all permissions
-      if (req.userRoles?.includes("super_admin") || req.userRoles?.includes("admin")) {
+      // Check for admin roles (case-insensitive)
+      // Check both the roles array and the legacy role field
+      const hasAdminRole = req.userRoles?.some(
+        (role) => role.toLowerCase() === "admin" || role.toLowerCase() === "super_admin"
+      ) || req.user.role?.toLowerCase() === "admin";
+
+      if (hasAdminRole) {
         next();
         return;
       }

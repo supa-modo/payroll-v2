@@ -23,10 +23,71 @@ export async function getDepartments(
     }
 
     const tenantId = requireTenantId(req);
+    const { search } = req.query;
+
+    // Build where clause for search
+    let whereClause: any = { tenantId };
+    
+    // If search is provided, search by department name, code, or manager name
+    if (search && typeof search === "string") {
+      const searchPattern = `%${search}%`;
+      
+      // First, find departments matching name or code
+      const departmentsByNameOrCode = await Department.findAll({
+        where: {
+          tenantId,
+          [Op.or]: [
+            { name: { [Op.iLike]: searchPattern } },
+            { code: { [Op.iLike]: searchPattern } },
+          ],
+        },
+        attributes: ["id"],
+        raw: true,
+      });
+      
+      const departmentIdsByNameOrCode = departmentsByNameOrCode.map((d: any) => d.id);
+      
+      // Find managers matching the search term
+      const managers = await Employee.findAll({
+        where: {
+          tenantId,
+          [Op.or]: [
+            { firstName: { [Op.iLike]: searchPattern } },
+            { lastName: { [Op.iLike]: searchPattern } },
+          ],
+        },
+        attributes: ["id"],
+        raw: true,
+      });
+      
+      const managerIds = managers.map((m: any) => m.id);
+      
+      // Find departments with matching managers
+      const departmentsByManager = await Department.findAll({
+        where: {
+          tenantId,
+          managerId: { [Op.in]: managerIds },
+        },
+        attributes: ["id"],
+        raw: true,
+      });
+      
+      const departmentIdsByManager = departmentsByManager.map((d: any) => d.id);
+      
+      // Combine all matching department IDs
+      const allMatchingIds = [...new Set([...departmentIdsByNameOrCode, ...departmentIdsByManager])];
+      
+      if (allMatchingIds.length > 0) {
+        whereClause.id = { [Op.in]: allMatchingIds };
+      } else {
+        // No matches found, return empty result
+        whereClause.id = { [Op.in]: [] };
+      }
+    }
 
     // Optimize: Get departments with manager and parent, but get employee count separately
     const departments = await Department.findAll({
-      where: { tenantId },
+      where: whereClause,
       include: [
         {
           model: Employee,

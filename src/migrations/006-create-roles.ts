@@ -107,3 +107,4 @@ export async function down(queryInterface: QueryInterface): Promise<void> {
   }
 }
 
+

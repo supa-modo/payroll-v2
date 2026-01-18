@@ -7,7 +7,7 @@ import * as employeeController from "../controllers/employeeController";
 import { authenticateToken } from "../middleware/auth";
 import { requirePermission, requireAnyPermission } from "../middleware/rbac";
 import { body, handleValidationErrors } from "../middleware/validator";
-import { uploadPhoto } from "../middleware/upload";
+import { upload, uploadPhoto } from "../middleware/upload";
 
 const router = Router();
 
@@ -34,73 +34,22 @@ router.get("/:id", employeeController.getEmployee);
 
 /**
  * @route   POST /api/employees
- * @desc    Create employee
+ * @desc    Create employee (supports multipart/form-data for file uploads)
  * @access  Private
+ * @note    Validation is handled in controller for multipart requests
  */
 router.post(
   "/",
   [
     requirePermission("employee:create"),
-    body("employeeNumber")
-      .optional()
-      .notEmpty()
-      .withMessage("Employee number cannot be empty if provided"),
-    body("firstName").notEmpty().withMessage("First name is required"),
-    body("lastName").notEmpty().withMessage("Last name is required"),
-    body("jobTitle").notEmpty().withMessage("Job title is required"),
-    body("hireDate")
-      .notEmpty()
-      .withMessage("Hire date is required")
-      .matches(/^\d{4}-\d{2}-\d{2}$/)
-      .withMessage("Invalid hire date format (expected YYYY-MM-DD)"),
-    body("employmentType")
-      .optional()
-      .isIn(["permanent", "contract", "casual", "intern"])
-      .withMessage("Invalid employment type"),
-    body("departmentId")
-      .optional()
-      .custom((value) => {
-        if (value === "" || value === null || value === undefined) return true;
-        return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-      })
-      .withMessage("Invalid department ID"),
-    body("email").optional().isEmail().withMessage("Invalid email format"),
-    body("workEmail")
-      .optional()
-      .custom((value) => {
-        if (!value || value === "") return true;
-        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-      })
-      .withMessage("Invalid work email format"),
-    body("personalEmail")
-      .optional()
-      .custom((value) => {
-        if (!value || value === "") return true;
-        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-      })
-      .withMessage("Invalid personal email format"),
-    body("dateOfBirth")
-      .optional()
-      .custom((value) => {
-        if (!value || value === "") return true;
-        return /^\d{4}-\d{2}-\d{2}$/.test(value);
-      })
-      .withMessage("Invalid date of birth format (expected YYYY-MM-DD)"),
-    body("probationEndDate")
-      .optional()
-      .custom((value) => {
-        if (!value || value === "") return true;
-        return /^\d{4}-\d{2}-\d{2}$/.test(value);
-      })
-      .withMessage("Invalid probation end date format (expected YYYY-MM-DD)"),
-    body("contractEndDate")
-      .optional()
-      .custom((value) => {
-        if (!value || value === "") return true;
-        return /^\d{4}-\d{2}-\d{2}$/.test(value);
-      })
-      .withMessage("Invalid contract end date format (expected YYYY-MM-DD)"),
-    handleValidationErrors,
+    // Handle multipart/form-data with photo and documents
+    // This middleware will parse files and add them to req.files
+    upload.fields([
+      { name: "photo", maxCount: 1 },
+      { name: "documents", maxCount: 10 }
+    ]),
+    // Skip express-validator for multipart requests - validation done in controller
+    // For JSON requests, validation can be added here if needed
   ],
   employeeController.createEmployee
 );

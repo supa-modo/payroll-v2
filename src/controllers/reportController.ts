@@ -88,7 +88,8 @@ export async function getPayrollReports(
         break;
 
       case "tax":
-        result = await getTaxSummary(tenantId, start, end);
+        const includeEmployeeBreakdown = req.query.includeEmployeeBreakdown === "true";
+        result = await getTaxSummary(tenantId, start, end, includeEmployeeBreakdown);
         break;
 
       case "history":

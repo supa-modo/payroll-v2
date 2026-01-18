@@ -41,6 +41,7 @@ import Notification from "./Notification";
 import NotificationPreference from "./NotificationPreference";
 import SystemSetting from "./SystemSetting";
 import StatutoryRate from "./StatutoryRate";
+import TaxRemittance from "./TaxRemittance";
 
 // ============================================
 // ASSOCIATIONS
@@ -59,6 +60,7 @@ Tenant.hasMany(AuditLog, { foreignKey: "tenantId", as: "auditLogs" });
 Tenant.hasMany(DataChangeHistory, { foreignKey: "tenantId", as: "dataChangeHistory" });
 Tenant.hasMany(Notification, { foreignKey: "tenantId", as: "notifications" });
 Tenant.hasMany(SystemSetting, { foreignKey: "tenantId", as: "systemSettings" });
+Tenant.hasMany(TaxRemittance, { foreignKey: "tenantId", as: "taxRemittances" });
 
 // User Associations
 User.belongsTo(Tenant, { foreignKey: "tenantId", as: "tenant" });
@@ -81,6 +83,7 @@ User.hasMany(DataChangeHistory, { foreignKey: "changedBy", as: "dataChanges" });
 User.hasOne(NotificationPreference, { foreignKey: "userId", as: "notificationPreference" });
 User.hasMany(Notification, { foreignKey: "userId", as: "notifications" });
 User.hasMany(SystemSetting, { foreignKey: "updatedBy", as: "updatedSettings" });
+User.hasMany(TaxRemittance, { foreignKey: "remittedBy", as: "remittedTaxes" });
 
 // Department Associations
 Department.belongsTo(Tenant, { foreignKey: "tenantId", as: "tenant" });
@@ -196,6 +199,7 @@ SalaryRevisionHistory.belongsTo(User, { foreignKey: "createdBy", as: "creator" }
 // PayrollPeriod Associations
 PayrollPeriod.belongsTo(Tenant, { foreignKey: "tenantId", as: "tenant" });
 PayrollPeriod.hasMany(Payroll, { foreignKey: "payrollPeriodId", as: "payrolls" });
+PayrollPeriod.hasMany(TaxRemittance, { foreignKey: "payrollPeriodId", as: "taxRemittances" });
 PayrollPeriod.belongsTo(User, { foreignKey: "lockedBy", as: "lockedByUser" });
 PayrollPeriod.belongsTo(User, { foreignKey: "processedBy", as: "processedByUser" });
 PayrollPeriod.belongsTo(User, { foreignKey: "approvedBy", as: "approvedByUser" });
@@ -278,6 +282,11 @@ NotificationPreference.belongsTo(User, { foreignKey: "userId", as: "user" });
 SystemSetting.belongsTo(Tenant, { foreignKey: "tenantId", as: "tenant" });
 SystemSetting.belongsTo(User, { foreignKey: "updatedBy", as: "updater" });
 
+// TaxRemittance Associations
+TaxRemittance.belongsTo(Tenant, { foreignKey: "tenantId", as: "tenant" });
+TaxRemittance.belongsTo(PayrollPeriod, { foreignKey: "payrollPeriodId", as: "payrollPeriod" });
+TaxRemittance.belongsTo(User, { foreignKey: "remittedBy", as: "remittedByUser" });
+
 // Export all models
 export {
   // Core
@@ -317,6 +326,7 @@ export {
   NotificationPreference,
   SystemSetting,
   StatutoryRate,
+  TaxRemittance,
 };
 
 // Export Sequelize utilities

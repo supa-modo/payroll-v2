@@ -36,6 +36,7 @@ import expenseDocumentRoutes from "./routes/expenseDocuments";
 import loanRoutes from "./routes/loans";
 import loanRepaymentRoutes from "./routes/loanRepayments";
 import reportRoutes from "./routes/reports";
+import taxRemittanceRoutes from "./routes/taxRemittances";
 import systemAdminRoutes from "./routes/systemAdmin";
 import auditLogRoutes from "./routes/auditLogs";
 import notificationRoutes from "./routes/notifications";
@@ -156,6 +157,7 @@ export function createApp(): Application {
   app.use("/api/loans", loanRoutes);
   app.use("/api/loans/:loanId/repayments", loanRepaymentRoutes);
   app.use("/api/reports", reportRoutes);
+  app.use("/api/tax-remittances", taxRemittanceRoutes);
   app.use("/api/system-admin", systemAdminRoutes);
   app.use("/api/audit-logs", auditLogRoutes);
   app.use("/api/notifications", notificationRoutes);

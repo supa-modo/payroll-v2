@@ -6,6 +6,7 @@
 import { Payroll, PayrollPeriod, Employee, Department } from "../models";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
+import { calculateRemittanceTotals } from "./taxRemittanceService";
 
 export interface MonthlyPayrollSummary {
   month: string;
@@ -41,6 +42,39 @@ export interface TaxSummary {
     nssf: number;
     nhif: number;
   }>;
+  periodBreakdown: Array<{
+    periodId: string;
+    periodName: string;
+    startDate: string;
+    endDate: string;
+    paye: number;
+    nssf: number;
+    nhif: number;
+    status: string;
+  }>;
+  employeeBreakdown?: Array<{
+    employeeId: string;
+    employeeName: string;
+    employeeNumber: string;
+    paye: number;
+    nssf: number;
+    nhif: number;
+  }>;
+  departmentBreakdown: Array<{
+    departmentId: string;
+    departmentName: string;
+    paye: number;
+    nssf: number;
+    nhif: number;
+  }>;
+  remittanceStatus: {
+    pendingPAYE: number;
+    pendingNSSF: number;
+    pendingNHIF: number;
+    remittedPAYE: number;
+    remittedNSSF: number;
+    remittedNHIF: number;
+  };
 }
 
 export interface EmployeePayrollHistory {
@@ -288,21 +322,63 @@ export async function getDepartmentalPayrollBreakdown(
 export async function getTaxSummary(
   tenantId: string,
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  includeEmployeeBreakdown: boolean = false
 ): Promise<TaxSummary> {
   try {
     const startDateStr = startDate.toISOString().split("T")[0];
     const endDateStr = endDate.toISOString().split("T")[0];
 
+    logger.debug(
+      `Getting tax summary for tenant ${tenantId}, date range: ${startDateStr} to ${endDateStr}`
+    );
+
+    // Fix date filtering: use overlap logic instead of strict containment
+    // A period overlaps if: startDate <= endDateStr AND endDate >= startDateStr
     const periods = await PayrollPeriod.findAll({
       where: {
         tenantId,
-        startDate: { [Op.gte]: startDateStr },
-        endDate: { [Op.lte]: endDateStr },
+        startDate: { [Op.lte]: endDateStr },
+        endDate: { [Op.gte]: startDateStr },
+        // Only include processed/locked payrolls
+        status: { [Op.in]: ["approved", "locked", "paid"] },
       },
     });
 
+    logger.debug(
+      `Found ${periods.length} payroll periods in date range with status approved/locked/paid`
+    );
+
+    if (periods.length > 0) {
+      logger.debug(
+        `Periods found: ${periods.map((p) => `${p.name} (${p.status})`).join(", ")}`
+      );
+    }
+
     const periodIds = periods.map((p) => p.id);
+
+    if (periodIds.length === 0) {
+      logger.warn(
+        `No payroll periods found for tax summary. Date range: ${startDateStr} to ${endDateStr}, Status: approved/locked/paid`
+      );
+      return {
+        totalPAYE: 0,
+        totalNSSF: 0,
+        totalNHIF: 0,
+        totalStatutory: 0,
+        breakdown: [],
+        periodBreakdown: [],
+        departmentBreakdown: [],
+        remittanceStatus: {
+          pendingPAYE: 0,
+          pendingNSSF: 0,
+          pendingNHIF: 0,
+          remittedPAYE: 0,
+          remittedNSSF: 0,
+          remittedNHIF: 0,
+        },
+      };
+    }
 
     const payrolls = await Payroll.findAll({
       where: {
@@ -314,8 +390,29 @@ export async function getTaxSummary(
           as: "payrollPeriod",
           required: true,
         },
+        {
+          model: Employee,
+          as: "employee",
+          required: true,
+          include: [
+            {
+              model: Department,
+              as: "department",
+              required: false,
+            },
+          ],
+        },
       ],
     });
+
+    logger.debug(`Found ${payrolls.length} payroll records for tax summary`);
+
+    if (payrolls.length > 0) {
+      const samplePayroll = payrolls[0];
+      logger.debug(
+        `Sample payroll - PAYE: ${samplePayroll.payeAmount}, NSSF: ${samplePayroll.nssfAmount}, NHIF: ${samplePayroll.nhifAmount}`
+      );
+    }
 
     let totalPAYE = 0;
     let totalNSSF = 0;
@@ -327,9 +424,43 @@ export async function getTaxSummary(
       nhif: number;
     }>();
 
+    const periodBreakdownMap = new Map<string, {
+      periodId: string;
+      periodName: string;
+      startDate: string;
+      endDate: string;
+      status: string;
+      paye: number;
+      nssf: number;
+      nhif: number;
+    }>();
+
+    const employeeBreakdownMap = new Map<string, {
+      employeeId: string;
+      employeeName: string;
+      employeeNumber: string;
+      paye: number;
+      nssf: number;
+      nhif: number;
+    }>();
+
+    const departmentBreakdownMap = new Map<string, {
+      departmentId: string;
+      departmentName: string;
+      paye: number;
+      nssf: number;
+      nhif: number;
+    }>();
+
     for (const payroll of payrolls) {
       const period = payroll.get("payrollPeriod") as PayrollPeriod;
-      const month = new Date(period.startDate).toISOString().slice(0, 7);
+      const employee = payroll.get("employee") as Employee;
+      const department = employee?.get("department") as Department | undefined;
+      // Handle DATEONLY fields which are strings, not Date objects
+      const startDate = period.startDate instanceof Date
+        ? period.startDate
+        : new Date(period.startDate);
+      const month = startDate.toISOString().slice(0, 7);
 
       const paye = parseFloat(payroll.payeAmount?.toString() || "0");
       const nssf = parseFloat(payroll.nssfAmount?.toString() || "0");
@@ -339,15 +470,93 @@ export async function getTaxSummary(
       totalNSSF += nssf;
       totalNHIF += nhif;
 
+      // Monthly breakdown
       if (!monthlyBreakdown.has(month)) {
         monthlyBreakdown.set(month, { paye: 0, nssf: 0, nhif: 0 });
       }
-
       const monthData = monthlyBreakdown.get(month)!;
       monthData.paye += paye;
       monthData.nssf += nssf;
       monthData.nhif += nhif;
+
+      // Period breakdown
+      if (!periodBreakdownMap.has(period.id)) {
+        // Handle DATEONLY fields which are strings, not Date objects
+        const startDateValue = period.startDate as any;
+        const endDateValue = period.endDate as any;
+        const startDateStr = startDateValue instanceof Date 
+          ? startDateValue.toISOString().split("T")[0]
+          : String(startDateValue);
+        const endDateStr = endDateValue instanceof Date
+          ? endDateValue.toISOString().split("T")[0]
+          : String(endDateValue);
+        
+        periodBreakdownMap.set(period.id, {
+          periodId: period.id,
+          periodName: period.name,
+          startDate: startDateStr,
+          endDate: endDateStr,
+          status: period.status,
+          paye: 0,
+          nssf: 0,
+          nhif: 0,
+        });
+      }
+      const periodData = periodBreakdownMap.get(period.id)!;
+      periodData.paye += paye;
+      periodData.nssf += nssf;
+      periodData.nhif += nhif;
+
+      // Employee breakdown (if requested)
+      if (includeEmployeeBreakdown && employee) {
+        const employeeKey = `${period.id}-${employee.id}`;
+        if (!employeeBreakdownMap.has(employeeKey)) {
+          employeeBreakdownMap.set(employeeKey, {
+            employeeId: employee.id,
+            employeeName: `${employee.firstName} ${employee.lastName}`,
+            employeeNumber: employee.employeeNumber,
+            paye: 0,
+            nssf: 0,
+            nhif: 0,
+          });
+        }
+        const employeeData = employeeBreakdownMap.get(employeeKey)!;
+        employeeData.paye += paye;
+        employeeData.nssf += nssf;
+        employeeData.nhif += nhif;
+      }
+
+      // Department breakdown
+      if (department) {
+        if (!departmentBreakdownMap.has(department.id)) {
+          departmentBreakdownMap.set(department.id, {
+            departmentId: department.id,
+            departmentName: department.name,
+            paye: 0,
+            nssf: 0,
+            nhif: 0,
+          });
+        }
+        const deptData = departmentBreakdownMap.get(department.id)!;
+        deptData.paye += paye;
+        deptData.nssf += nssf;
+        deptData.nhif += nhif;
+      }
     }
+
+    // Get remittance status from TaxRemittance records
+    const remittanceStatus = await calculateRemittanceTotals(
+      tenantId,
+      startDate,
+      endDate
+    );
+
+    logger.debug(
+      `Tax summary totals - PAYE: ${totalPAYE}, NSSF: ${totalNSSF}, NHIF: ${totalNHIF}, Total: ${totalPAYE + totalNSSF + totalNHIF}`
+    );
+    logger.debug(
+      `Remittance status - Pending: PAYE=${remittanceStatus.pendingPAYE}, NSSF=${remittanceStatus.pendingNSSF}, NHIF=${remittanceStatus.pendingNHIF}`
+    );
 
     return {
       totalPAYE,
@@ -360,6 +569,14 @@ export async function getTaxSummary(
           ...data,
         }))
         .sort((a, b) => a.month.localeCompare(b.month)),
+      periodBreakdown: Array.from(periodBreakdownMap.values())
+        .sort((a, b) => a.startDate.localeCompare(b.startDate)),
+      employeeBreakdown: includeEmployeeBreakdown
+        ? Array.from(employeeBreakdownMap.values())
+        : undefined,
+      departmentBreakdown: Array.from(departmentBreakdownMap.values())
+        .sort((a, b) => a.departmentName.localeCompare(b.departmentName)),
+      remittanceStatus,
     };
   } catch (error: any) {
     logger.error("Error getting tax summary:", error);
@@ -407,12 +624,26 @@ export async function getEmployeePayrollHistory(
 
     return payrolls.map((payroll) => {
       const period = payroll.get("payrollPeriod") as PayrollPeriod;
+      // Handle DATEONLY fields which are strings, not Date objects
+      const startDateValue = period.startDate as any;
+      const endDateValue = period.endDate as any;
+      const payDateValue = period.payDate as any;
+      const startDateStr = startDateValue instanceof Date
+        ? startDateValue.toISOString().split("T")[0]
+        : String(startDateValue);
+      const endDateStr = endDateValue instanceof Date
+        ? endDateValue.toISOString().split("T")[0]
+        : String(endDateValue);
+      const payDateStr = payDateValue instanceof Date
+        ? payDateValue.toISOString().split("T")[0]
+        : String(payDateValue);
+      
       return {
         periodId: period.id,
         periodName: period.name,
-        startDate: period.startDate.toISOString().split("T")[0],
-        endDate: period.endDate.toISOString().split("T")[0],
-        payDate: period.payDate.toISOString().split("T")[0],
+        startDate: startDateStr,
+        endDate: endDateStr,
+        payDate: payDateStr,
         grossPay: parseFloat(payroll.grossPay.toString()),
         totalDeductions: parseFloat(payroll.totalDeductions.toString()),
         netPay: parseFloat(payroll.netPay.toString()),

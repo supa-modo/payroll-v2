@@ -10,6 +10,7 @@ import { Op } from "sequelize";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
 import { calculateEmployeePayroll, getActiveLoansForPeriod } from "../services/payrollCalculationService";
+import { createRemittanceRecords } from "../services/taxRemittanceService";
 
 /**
  * Get all payroll periods
@@ -637,6 +638,20 @@ export async function lockPayrollPeriod(
       lockedAt: new Date(),
       lockedBy: req.user.id,
     });
+
+    // Auto-create remittance records when payroll is locked
+    try {
+      const remittances = await createRemittanceRecords(period.id, tenantId);
+      logger.info(
+        `Created ${remittances.length} remittance records for locked payroll period ${period.id}`
+      );
+    } catch (error: any) {
+      // Log error but don't fail the lock operation
+      logger.error(
+        `Failed to create remittance records for period ${period.id}:`,
+        error
+      );
+    }
 
     res.json({ period });
   } catch (error: any) {

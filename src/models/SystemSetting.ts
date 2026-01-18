@@ -5,10 +5,11 @@ import User from "./User";
 
 interface SystemSettingAttributes {
   id: string;
-  tenantId: string;
+  tenantId: string | null;
   key: string;
   value: Record<string, any>;
   description?: string | null;
+  category?: string | null;
   updatedAt: Date;
   updatedBy?: string | null;
 }
@@ -16,7 +17,7 @@ interface SystemSettingAttributes {
 interface SystemSettingCreationAttributes
   extends Optional<
     SystemSettingAttributes,
-    "id" | "description" | "updatedAt" | "updatedBy"
+    "id" | "description" | "category" | "updatedAt" | "updatedBy" | "tenantId"
   > {}
 
 class SystemSetting
@@ -24,12 +25,20 @@ class SystemSetting
   implements SystemSettingAttributes
 {
   declare id: string;
-  declare tenantId: string;
+  declare tenantId: string | null;
   declare key: string;
   declare value: Record<string, any>;
   declare description: string | null | undefined;
+  declare category: string | null | undefined;
   declare readonly updatedAt: Date;
   declare updatedBy: string | null | undefined;
+
+  /**
+   * Check if this is a global setting
+   */
+  public isGlobal(): boolean {
+    return this.tenantId === null;
+  }
 }
 
 SystemSetting.init(
@@ -41,7 +50,7 @@ SystemSetting.init(
     },
     tenantId: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true, // Nullable for global settings
       field: "tenant_id",
       references: {
         model: Tenant,
@@ -58,6 +67,10 @@ SystemSetting.init(
     },
     description: {
       type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    category: {
+      type: DataTypes.STRING(100),
       allowNull: true,
     },
     updatedAt: {
@@ -83,7 +96,16 @@ SystemSetting.init(
       {
         unique: true,
         fields: ["tenant_id", "key"],
-        name: "unique_setting_key",
+        name: "unique_setting_key_global",
+      },
+      {
+        unique: true,
+        fields: ["key"],
+        name: "unique_global_setting_key",
+      },
+      {
+        fields: ["category"],
+        name: "idx_system_settings_category",
       },
     ],
   }

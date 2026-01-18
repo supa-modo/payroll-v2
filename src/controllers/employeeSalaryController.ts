@@ -30,7 +30,9 @@ export async function getEmployeeSalary(
     const tenantId = requireTenantId(req);
 
     const { employeeId } = req.params;
+    const { asOfDate } = req.query; // Optional query parameter to view components as of a specific date
     const today = new Date().toISOString().split("T")[0];
+    const viewDate = asOfDate ? (asOfDate as string) : today;
 
     // Verify employee belongs to tenant
     const employee = await Employee.findOne({
@@ -45,18 +47,18 @@ export async function getEmployeeSalary(
       return;
     }
 
-    // Get current active salary components
+    // Get active salary components as of the view date
     // A component is active if:
-    // - It starts on or before today (effectiveFrom <= today)
-    // - It hasn't ended yet (effectiveTo IS NULL OR effectiveTo > today) - excludes components ending today
+    // - It starts on or before the view date (effectiveFrom <= viewDate)
+    // - It hasn't ended yet (effectiveTo IS NULL OR effectiveTo >= viewDate) - includes components ending on viewDate
     // - The SalaryComponent itself is active (isActive = true)
     const salaryComponents = await EmployeeSalaryComponent.findAll({
       where: {
         employeeId,
-        effectiveFrom: { [Op.lte]: today },
+        effectiveFrom: { [Op.lte]: viewDate },
         [Op.or]: [
           { effectiveTo: null },
-          { effectiveTo: { [Op.gt]: today } }, // Changed from >= to > to exclude components ending today
+          { effectiveTo: { [Op.gte]: viewDate } }, // Changed to >= to include components ending on viewDate
         ],
       },
       include: [
@@ -80,7 +82,7 @@ export async function getEmployeeSalary(
     });
 
     logger.debug(
-      `Found ${salaryComponents.length} active salary components for employee ${employeeId} on ${today}`
+      `Found ${salaryComponents.length} active salary components for employee ${employeeId} as of ${viewDate}`
     );
 
     // Log details of each component for debugging

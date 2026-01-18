@@ -96,8 +96,7 @@ export async function up(queryInterface: QueryInterface): Promise<void> {
     try {
       await queryInterface.sequelize.query(`
         CREATE INDEX IF NOT EXISTS "idx_notifications_expires" 
-        ON "notifications" ("expires_at") 
-        WHERE "expires_at" > NOW();
+        ON "notifications" ("expires_at");
       `);
     } catch (error: any) {
       if (error?.code !== "42P01" && !error?.message?.includes("already exists")) {

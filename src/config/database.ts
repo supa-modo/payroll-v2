@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { Sequelize } from "sequelize";
+import logger from "../utils/logger";
 
 // Load environment variables before reading them
 dotenv.config();
@@ -16,7 +17,12 @@ const databaseConfig = {
     username: process.env.DB_USER || "payroll",
     password: process.env.DB_PASSWORD || "payroll123",
     dialect: "postgres" as const,
-    logging: console.log,
+    logging: (msg: string) => {
+      // Only log SQL queries in development if explicitly enabled
+      if (process.env.LOG_SQL_QUERIES === "true") {
+        logger.debug(msg);
+      }
+    },
     pool: {
       max: 10,
       min: 2,

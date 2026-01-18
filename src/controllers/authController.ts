@@ -10,7 +10,6 @@ import logger from "../utils/logger";
 import { createTenantAdminRole } from "../seeders/rolesAndPermissions";
 import { requireTenantId } from "../utils/tenant";
 import crypto from "crypto";
-import bcrypt from "bcryptjs";
 
 /**
  * Register a new tenant and admin user
@@ -465,15 +464,13 @@ export async function resetPassword(
       return;
     }
 
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-      // Update password and clear reset token
-      await user.update({
-        password: hashedPassword,
-        passwordResetToken: undefined,
-        passwordResetExpires: undefined,
-      });
+    // Update password and clear reset token
+    // Password will be hashed by the User model's beforeUpdate hook
+    await user.update({
+      password: password,
+      passwordResetToken: undefined,
+      passwordResetExpires: undefined,
+    });
 
     // Invalidate all refresh tokens for security
     await RefreshToken.destroy({

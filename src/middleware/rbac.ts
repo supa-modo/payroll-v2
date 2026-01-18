@@ -20,14 +20,20 @@ export interface RBACRequest extends AuthRequest {
 /**
  * Cache for user roles and permissions (in-memory, can be replaced with Redis)
  */
-const userPermissionsCache = new Map<string, { roles: string[]; permissions: string[]; expiresAt: number }>();
+const userPermissionsCache = new Map<
+  string,
+  { roles: string[]; permissions: string[]; expiresAt: number }
+>();
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Load user roles and permissions from database
  */
-export async function loadUserRolesAndPermissions(userId: string, tenantId: string | null): Promise<{
+export async function loadUserRolesAndPermissions(
+  userId: string,
+  tenantId: string | null
+): Promise<{
   roles: string[];
   permissions: string[];
 }> {
@@ -81,7 +87,7 @@ export async function loadUserRolesAndPermissions(userId: string, tenantId: stri
       const role = (userRole as any).role;
       if (role?.name) {
         roleNames.push(role.name);
-        
+
         // Extract permissions from nested structure
         if (role.permissions && Array.isArray(role.permissions)) {
           for (const permission of role.permissions) {
@@ -145,9 +151,11 @@ export async function checkPermission(
 
   // Check for admin roles (case-insensitive)
   // Check both the roles array and the legacy role field
-  const hasAdminRole = req.userRoles?.some(
-    (role) => role.toLowerCase() === "admin" || role.toLowerCase() === "super_admin"
-  ) || req.user.role?.toLowerCase() === "admin";
+  const hasAdminRole =
+    req.userRoles?.some(
+      (role) =>
+        role.toLowerCase() === "admin" || role.toLowerCase() === "super_admin"
+    ) || req.user.role?.toLowerCase() === "admin";
 
   if (hasAdminRole) {
     return true;
@@ -159,7 +167,10 @@ export async function checkPermission(
 /**
  * Check if user has a specific role
  */
-export async function checkRole(req: RBACRequest, role: string): Promise<boolean> {
+export async function checkRole(
+  req: RBACRequest,
+  role: string
+): Promise<boolean> {
   if (!req.user) {
     return false;
   }
@@ -185,7 +196,11 @@ export async function checkRole(req: RBACRequest, role: string): Promise<boolean
  * Middleware to require a specific permission
  */
 export function requirePermission(permission: string) {
-  return async (req: RBACRequest, res: Response, next: NextFunction): Promise<void> => {
+  return async (
+    req: RBACRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
       if (!req.user) {
         res.status(401).json({ error: "Authentication required" });
@@ -214,7 +229,11 @@ export function requirePermission(permission: string) {
  * Middleware to require a specific role
  */
 export function requireRole(role: string) {
-  return async (req: RBACRequest, res: Response, next: NextFunction): Promise<void> => {
+  return async (
+    req: RBACRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
       if (!req.user) {
         res.status(401).json({ error: "Authentication required" });
@@ -243,7 +262,11 @@ export function requireRole(role: string) {
  * Middleware to require any of the specified permissions
  */
 export function requireAnyPermission(...permissions: string[]) {
-  return async (req: RBACRequest, res: Response, next: NextFunction): Promise<void> => {
+  return async (
+    req: RBACRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
       if (!req.user) {
         res.status(401).json({ error: "Authentication required" });
@@ -272,9 +295,12 @@ export function requireAnyPermission(...permissions: string[]) {
 
       // Check for admin roles (case-insensitive)
       // Check both the roles array and the legacy role field
-      const hasAdminRole = req.userRoles?.some(
-        (role) => role.toLowerCase() === "admin" || role.toLowerCase() === "super_admin"
-      ) || req.user.role?.toLowerCase() === "admin";
+      const hasAdminRole =
+        req.userRoles?.some(
+          (role) =>
+            role.toLowerCase() === "admin" ||
+            role.toLowerCase() === "super_admin"
+        ) || req.user.role?.toLowerCase() === "admin";
 
       if (hasAdminRole) {
         next();
@@ -282,9 +308,9 @@ export function requireAnyPermission(...permissions: string[]) {
       }
 
       // Check if user has any of the required permissions
-      const hasAnyPermission = permissions.some((perm) =>
-        req.userPermissions?.includes(perm)
-      ) || false;
+      const hasAnyPermission =
+        permissions.some((perm) => req.userPermissions?.includes(perm)) ||
+        false;
 
       if (!hasAnyPermission) {
         res.status(403).json({
@@ -316,4 +342,3 @@ export function clearUserCache(userId: string, tenantId: string): void {
 export function clearAllCache(): void {
   userPermissionsCache.clear();
 }
-

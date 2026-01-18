@@ -70,6 +70,34 @@ router.put("/read-all", notificationController.markAllRead);
 router.delete("/:id", notificationController.deleteNotification);
 
 /**
+ * @route   GET /api/notifications/analytics
+ * @desc    Get notification analytics
+ * @access  Private
+ */
+router.get("/analytics", notificationController.getAnalytics);
+
+/**
+ * @route   GET /api/notifications/stats
+ * @desc    Get notification statistics
+ * @access  Private
+ */
+router.get("/stats", notificationController.getStats);
+
+/**
+ * @route   POST /api/notifications/batch
+ * @desc    Create batch notifications
+ * @access  Private
+ */
+router.post("/batch", notificationController.createBatch);
+
+/**
+ * @route   PUT /api/notifications/:id/retry
+ * @desc    Retry failed notification
+ * @access  Private
+ */
+router.put("/:id/retry", notificationController.retryNotification);
+
+/**
  * @route   GET /api/notification-preferences
  * @desc    Get user notification preferences
  * @access  Private

@@ -18,6 +18,7 @@ import {
   getTenantStats,
   getSystemStats,
 } from "../controllers/systemAdminController";
+import * as systemAdminSettingsController from "../controllers/systemAdminSettingsController";
 
 const router = Router();
 
@@ -89,6 +90,59 @@ router.post(
 
 // GET /system-admin/tenants/:tenantId/stats - Get tenant statistics
 router.get("/tenants/:tenantId/stats", getTenantStats);
+
+// Settings routes
+// GET /system-admin/settings - Get all global settings
+router.get("/settings", systemAdminSettingsController.getAllSettings);
+
+// GET /system-admin/settings/category/:category - Get settings by category
+router.get("/settings/category/:category", systemAdminSettingsController.getSettingsByCategory);
+
+// GET /system-admin/settings/notification-config - Get notification configuration
+router.get("/settings/notification-config", systemAdminSettingsController.getNotificationConfig);
+
+// POST /system-admin/settings/notification-config/test/redis - Test Redis connection
+router.post("/settings/notification-config/test/redis", systemAdminSettingsController.testRedisConnectionEndpoint);
+
+// POST /system-admin/settings/notification-config/test/smtp - Test SMTP connection
+router.post("/settings/notification-config/test/smtp", systemAdminSettingsController.testSMTPConnection);
+
+// PUT /system-admin/settings/notification-config - Update notification configuration
+router.put(
+  "/settings/notification-config",
+  [
+    body("config").isObject().withMessage("Configuration must be an object"),
+    handleValidationErrors,
+  ],
+  systemAdminSettingsController.updateNotificationConfig
+);
+
+// GET /system-admin/settings/:key - Get single setting
+router.get("/settings/:key", systemAdminSettingsController.getSetting);
+
+// POST /system-admin/settings - Create new global setting
+router.post(
+  "/settings",
+  [
+    body("key").notEmpty().withMessage("Key is required"),
+    body("value").notEmpty().withMessage("Value is required"),
+    handleValidationErrors,
+  ],
+  systemAdminSettingsController.createOrUpdateSetting
+);
+
+// PUT /system-admin/settings/:key - Update global setting
+router.put(
+  "/settings/:key",
+  [
+    body("value").notEmpty().withMessage("Value is required"),
+    handleValidationErrors,
+  ],
+  systemAdminSettingsController.updateSetting
+);
+
+// DELETE /system-admin/settings/:key - Delete global setting
+router.delete("/settings/:key", systemAdminSettingsController.deleteSetting);
 
 export default router;
 

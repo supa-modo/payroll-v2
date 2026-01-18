@@ -318,3 +318,6 @@ export {
   SystemSetting,
   StatutoryRate,
 };
+
+// Export Sequelize utilities
+export { Op } from "sequelize";

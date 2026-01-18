@@ -187,7 +187,7 @@ User.init(
         }
       },
       beforeUpdate: async (user: User) => {
-        if (user.changed("password")) {
+        if (user.changed("password") && user.password) {
           const salt = await bcrypt.genSalt(10);
           user.password = await bcrypt.hash(user.password, salt);
         }

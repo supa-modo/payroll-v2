@@ -23,14 +23,20 @@ router.use(authenticateToken);
 // GET /payroll-periods/:periodId/payrolls - Get all payrolls for period
 router.get(
   "/",
-  requireAnyPermission("payroll:read", "payroll:view"),
+  // Allow self-service employees to call this endpoint without a periodId;
+  // controller will self-scope to the logged-in employee.
+  requireAnyPermission("payroll:read", "payroll:view", "payslip:view:self"),
   getPayrolls
 );
 
-// GET /payrolls/:id - Get single payroll
+// GET /payrolls/:id - Get single payroll (employees with payslip:view:self only their own row)
 router.get(
   "/:id",
-  requireAnyPermission("payroll:read", "payroll:view"),
+  requireAnyPermission(
+    "payroll:read",
+    "payroll:view",
+    "payslip:view:self"
+  ),
   getPayroll
 );
 

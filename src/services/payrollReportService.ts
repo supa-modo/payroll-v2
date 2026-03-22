@@ -3,7 +3,7 @@
  * Handles payroll data aggregation and reporting
  */
 
-import { Payroll, PayrollPeriod, Employee, Department } from "../models";
+import { Payroll, PayrollPeriod, Employee, Department, PayrollItem } from "../models";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
 import { calculateRemittanceTotals } from "./taxRemittanceService";
@@ -71,9 +71,11 @@ export interface TaxSummary {
     pendingPAYE: number;
     pendingNSSF: number;
     pendingNHIF: number;
+    pendingHOUSING_LEVY: number;
     remittedPAYE: number;
     remittedNSSF: number;
     remittedNHIF: number;
+    remittedHOUSING_LEVY: number;
   };
 }
 
@@ -96,6 +98,16 @@ export interface PayrollTrend {
   month: string;
   totalGross: number;
   totalNet: number;
+  employeeCount: number;
+}
+
+export interface DeductionBreakdownRow {
+  salaryComponentId: string | null;
+  name: string;
+  category: string;
+  totalAmount: number;
+  lineCount: number;
+  payrollCount: number;
   employeeCount: number;
 }
 
@@ -169,7 +181,8 @@ export async function getMonthlyPayrollSummary(
       data.totalNet += parseFloat(payroll.netPay.toString());
       data.totalPAYE += parseFloat(payroll.payeAmount?.toString() || "0");
       data.totalNSSF += parseFloat(payroll.nssfAmount?.toString() || "0");
-      data.totalNHIF += parseFloat(payroll.nhifAmount?.toString() || "0");
+      // In Kenya this statutory deduction is SHIF (NHIF legacy fields may remain in DB).
+      data.totalNHIF += parseFloat(payroll.shifAmount?.toString() || "0");
     }
 
     return Array.from(monthlyData.entries())
@@ -294,7 +307,7 @@ export async function getDepartmentalPayrollBreakdown(
       const netPay = parseFloat(payroll.netPay.toString()) || 0;
       const paye = parseFloat(payroll.payeAmount?.toString() || "0") || 0;
       const nssf = parseFloat(payroll.nssfAmount?.toString() || "0") || 0;
-      const nhif = parseFloat(payroll.nhifAmount?.toString() || "0") || 0;
+      const nhif = parseFloat(payroll.shifAmount?.toString() || "0") || 0;
       
       data.totalGross += grossPay;
       data.totalDeductions += totalDeductions;
@@ -373,9 +386,11 @@ export async function getTaxSummary(
           pendingPAYE: 0,
           pendingNSSF: 0,
           pendingNHIF: 0,
+          pendingHOUSING_LEVY: 0,
           remittedPAYE: 0,
           remittedNSSF: 0,
           remittedNHIF: 0,
+          remittedHOUSING_LEVY: 0,
         },
       };
     }
@@ -409,9 +424,9 @@ export async function getTaxSummary(
 
     if (payrolls.length > 0) {
       const samplePayroll = payrolls[0];
-      logger.debug(
-        `Sample payroll - PAYE: ${samplePayroll.payeAmount}, NSSF: ${samplePayroll.nssfAmount}, NHIF: ${samplePayroll.nhifAmount}`
-      );
+        logger.debug(
+          `Sample payroll - PAYE: ${samplePayroll.payeAmount}, NSSF: ${samplePayroll.nssfAmount}, SHIF: ${samplePayroll.shifAmount}`
+        );
     }
 
     let totalPAYE = 0;
@@ -464,7 +479,7 @@ export async function getTaxSummary(
 
       const paye = parseFloat(payroll.payeAmount?.toString() || "0");
       const nssf = parseFloat(payroll.nssfAmount?.toString() || "0");
-      const nhif = parseFloat(payroll.nhifAmount?.toString() || "0");
+      const nhif = parseFloat(payroll.shifAmount?.toString() || "0");
 
       totalPAYE += paye;
       totalNSSF += nssf;
@@ -545,7 +560,7 @@ export async function getTaxSummary(
     }
 
     // Get remittance status from TaxRemittance records
-    const remittanceStatus = await calculateRemittanceTotals(
+    const remittanceStatusRaw = await calculateRemittanceTotals(
       tenantId,
       startDate,
       endDate
@@ -555,8 +570,20 @@ export async function getTaxSummary(
       `Tax summary totals - PAYE: ${totalPAYE}, NSSF: ${totalNSSF}, NHIF: ${totalNHIF}, Total: ${totalPAYE + totalNSSF + totalNHIF}`
     );
     logger.debug(
-      `Remittance status - Pending: PAYE=${remittanceStatus.pendingPAYE}, NSSF=${remittanceStatus.pendingNSSF}, NHIF=${remittanceStatus.pendingNHIF}`
+      `Remittance status - Pending: PAYE=${remittanceStatusRaw.pendingPAYE}, NSSF=${remittanceStatusRaw.pendingNSSF}, SHIF=${remittanceStatusRaw.pendingSHIF}`
     );
+
+    // Keep response shape stable (pendingNHIF/remittedNHIF) but map SHIF totals into it.
+    const remittanceStatus = {
+      pendingPAYE: remittanceStatusRaw.pendingPAYE,
+      pendingNSSF: remittanceStatusRaw.pendingNSSF,
+      pendingNHIF: (remittanceStatusRaw as any).pendingSHIF ?? remittanceStatusRaw.pendingNHIF,
+      pendingHOUSING_LEVY: (remittanceStatusRaw as any).pendingHOUSING_LEVY ?? 0,
+      remittedPAYE: remittanceStatusRaw.remittedPAYE,
+      remittedNSSF: remittanceStatusRaw.remittedNSSF,
+      remittedNHIF: (remittanceStatusRaw as any).remittedSHIF ?? remittanceStatusRaw.remittedNHIF,
+      remittedHOUSING_LEVY: (remittanceStatusRaw as any).remittedHOUSING_LEVY ?? 0,
+    };
 
     return {
       totalPAYE,
@@ -649,7 +676,7 @@ export async function getEmployeePayrollHistory(
         netPay: parseFloat(payroll.netPay.toString()),
         payeAmount: parseFloat(payroll.payeAmount?.toString() || "0"),
         nssfAmount: parseFloat(payroll.nssfAmount?.toString() || "0"),
-        nhifAmount: parseFloat(payroll.nhifAmount?.toString() || "0"),
+        nhifAmount: parseFloat(payroll.shifAmount?.toString() || "0"),
         status: payroll.status,
       };
     });
@@ -678,6 +705,128 @@ export async function getPayrollTrends(
     }));
   } catch (error: any) {
     logger.error("Error getting payroll trends:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get deduction breakdown for all PayrollItem deductions.
+ * Aggregates by salaryComponentId (nullable), name, and category.
+ */
+export async function getDeductionBreakdown(
+  tenantId: string,
+  startDate: Date,
+  endDate: Date,
+  departmentId?: string
+): Promise<DeductionBreakdownRow[]> {
+  try {
+    const startDateStr = startDate.toISOString().split("T")[0];
+    const endDateStr = endDate.toISOString().split("T")[0];
+
+    // Resolve payroll periods overlapping the given range.
+    const periods = await PayrollPeriod.findAll({
+      where: {
+        tenantId,
+        startDate: { [Op.lte]: endDateStr },
+        endDate: { [Op.gte]: startDateStr },
+        status: { [Op.in]: ["approved", "locked", "paid"] },
+      },
+    });
+
+    const periodIds = periods.map((p) => p.id);
+    if (periodIds.length === 0) return [];
+
+    // Resolve payrolls (optionally scoped to a department).
+    const payrollWhere: any = {
+      payrollPeriodId: { [Op.in]: periodIds },
+    };
+
+    if (departmentId) {
+      const employees = await Employee.findAll({
+        where: { tenantId, departmentId },
+        attributes: ["id"],
+      });
+      const employeeIds = employees.map((e: Employee) => e.id);
+      if (employeeIds.length === 0) return [];
+      payrollWhere.employeeId = { [Op.in]: employeeIds };
+    }
+
+    const payrolls = await Payroll.findAll({
+      where: payrollWhere,
+      attributes: ["id", "employeeId"],
+    });
+
+    if (payrolls.length === 0) return [];
+
+    const payrollIds = payrolls.map((p) => p.id);
+    const payrollIdToEmployeeId = new Map<string, string>();
+    for (const p of payrolls) {
+      payrollIdToEmployeeId.set(p.id, p.employeeId as unknown as string);
+    }
+
+    const payrollItems = await PayrollItem.findAll({
+      where: {
+        payrollId: { [Op.in]: payrollIds },
+        type: "deduction",
+      },
+      attributes: ["payrollId", "salaryComponentId", "name", "category", "amount"],
+    });
+
+    const groupMap = new Map<
+      string,
+      {
+        salaryComponentId: string | null;
+        name: string;
+        category: string;
+        totalAmount: number;
+        lineCount: number;
+        payrollIdSet: Set<string>;
+        employeeIdSet: Set<string>;
+      }
+    >();
+
+    for (const item of payrollItems) {
+      const salaryComponentId = (item.salaryComponentId as string | null) ?? null;
+      const name = item.name as string;
+      const category = item.category as string;
+
+      const key = `${salaryComponentId ?? "null"}|${name}|${category}`;
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          salaryComponentId,
+          name,
+          category,
+          totalAmount: 0,
+          lineCount: 0,
+          payrollIdSet: new Set<string>(),
+          employeeIdSet: new Set<string>(),
+        });
+      }
+
+      const group = groupMap.get(key)!;
+      const amount = parseFloat(item.amount?.toString() || "0");
+
+      group.totalAmount += amount;
+      group.lineCount += 1;
+      group.payrollIdSet.add(item.payrollId);
+
+      const employeeId = payrollIdToEmployeeId.get(item.payrollId);
+      if (employeeId) group.employeeIdSet.add(employeeId);
+    }
+
+    return Array.from(groupMap.values())
+      .map((g) => ({
+        salaryComponentId: g.salaryComponentId,
+        name: g.name,
+        category: g.category,
+        totalAmount: g.totalAmount,
+        lineCount: g.lineCount,
+        payrollCount: g.payrollIdSet.size,
+        employeeCount: g.employeeIdSet.size,
+      }))
+      .sort((a, b) => b.totalAmount - a.totalAmount);
+  } catch (error: any) {
+    logger.error("Error getting deduction breakdown:", error);
     throw error;
   }
 }

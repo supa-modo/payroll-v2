@@ -42,6 +42,8 @@ import auditLogRoutes from "./routes/auditLogs";
 import notificationRoutes from "./routes/notifications";
 import settingsRoutes from "./routes/settings";
 import dataChangeHistoryRoutes from "./routes/dataChangeHistory";
+import salaryReliefRoutes from "./routes/salaryReliefs";
+import meRoutes from "./routes/me";
 
 /**
  * Create and configure Express application
@@ -137,6 +139,7 @@ export function createApp(): Application {
 
   // Route handlers
   app.use("/api/auth", authRoutes);
+  app.use("/api/me", meRoutes);
   app.use("/api/departments", departmentRoutes);
   app.use("/api/employees", employeeRoutes);
   app.use("/api/roles", roleRoutes);
@@ -162,6 +165,7 @@ export function createApp(): Application {
   app.use("/api/audit-logs", auditLogRoutes);
   app.use("/api/notifications", notificationRoutes);
   app.use("/api/settings", settingsRoutes);
+  app.use("/api/salary-reliefs", salaryReliefRoutes);
   app.use("/api/data-change-history", dataChangeHistoryRoutes);
 
   // 404 handler
@@ -173,5 +177,8 @@ export function createApp(): Application {
   return app;
 }
 
-export default createApp;
+// Default export is an Express instance so test suites can do `supertest(app)`.
+// Server entrypoint should still use the named `createApp()` factory.
+const app = createApp();
+export default app;
 

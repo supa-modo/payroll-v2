@@ -108,6 +108,7 @@ AuditLog.init(
     createdAt: {
       type: DataTypes.DATE,
       field: "created_at",
+      defaultValue: DataTypes.NOW,
     },
   },
   {

@@ -75,7 +75,7 @@ TaxRemittance.init(
       allowNull: false,
       field: "tax_type",
       validate: {
-        isIn: [["PAYE", "NSSF", "NHIF"]],
+        isIn: [["PAYE", "NSSF", "NHIF", "SHIF", "HOUSING_LEVY"]],
       },
     },
     amount: {

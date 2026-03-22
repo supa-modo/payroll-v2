@@ -4,7 +4,13 @@
 
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
-import { EmployeeLoan, Employee, LoanRepayment } from "../models";
+import {
+  EmployeeLoan,
+  Employee,
+  LoanRepayment,
+  SalaryComponent,
+  EmployeeSalaryComponent,
+} from "../models";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
@@ -25,6 +31,97 @@ async function generateLoanNumber(tenantId: string): Promise<string> {
 
   const sequence = String(count + 1).padStart(4, "0");
   return `${prefix}${sequence}`;
+}
+
+async function ensureLoanDeductionComponent(tenantId: string, userId: string) {
+  const existing = await SalaryComponent.findOne({
+    where: {
+      tenantId,
+      code: "LOAN_REPAYMENT",
+    },
+  });
+  if (existing) {
+    return existing;
+  }
+  return SalaryComponent.create({
+    tenantId,
+    name: "Loan Repayment",
+    code: "LOAN_REPAYMENT",
+    type: "deduction",
+    category: "Loan",
+    calculationType: "fixed",
+    defaultAmount: 0,
+    isTaxable: false,
+    isStatutory: false,
+    isActive: true,
+    displayOrder: 999,
+    createdBy: userId,
+  });
+}
+
+async function upsertLoanDeductionForEmployee(
+  loan: EmployeeLoan,
+  tenantId: string,
+  userId: string
+) {
+  const component = await ensureLoanDeductionComponent(tenantId, userId);
+  const effectiveFrom = new Date(loan.repaymentStartDate).toISOString().split("T")[0];
+
+  const existing = await EmployeeSalaryComponent.findOne({
+    where: {
+      employeeId: loan.employeeId,
+      salaryComponentId: component.id,
+      effectiveFrom: new Date(effectiveFrom),
+    },
+  });
+
+  if (existing) {
+    await existing.update({
+      amount: loan.monthlyDeduction,
+      effectiveTo: null,
+      updatedBy: userId,
+    });
+    return;
+  }
+
+  await EmployeeSalaryComponent.create({
+    employeeId: loan.employeeId,
+    salaryComponentId: component.id,
+    amount: loan.monthlyDeduction,
+    effectiveFrom: new Date(effectiveFrom),
+    effectiveTo: null,
+    createdBy: loan.createdBy || userId,
+  });
+}
+
+async function endLoanDeductionForEmployee(
+  loan: EmployeeLoan,
+  tenantId: string,
+  userId: string
+) {
+  const component = await SalaryComponent.findOne({
+    where: {
+      tenantId,
+      code: "LOAN_REPAYMENT",
+      isActive: true,
+    },
+  });
+  if (!component) return;
+
+  const endDate = new Date().toISOString().split("T")[0];
+  await EmployeeSalaryComponent.update(
+    {
+      effectiveTo: new Date(endDate),
+      updatedBy: userId,
+    },
+    {
+      where: {
+        employeeId: loan.employeeId,
+        salaryComponentId: component.id,
+        [Op.or]: [{ effectiveTo: null }, { effectiveTo: { [Op.gte]: endDate } }],
+      },
+    }
+  );
 }
 
 /**
@@ -338,6 +435,8 @@ export async function approveLoan(
       updatedBy: req.user.id,
     });
 
+    await upsertLoanDeductionForEmployee(loan, tenantId, req.user.id);
+
     res.json({ loan });
   } catch (error: any) {
     logger.error("Approve loan error:", error);
@@ -387,6 +486,8 @@ export async function completeLoan(
       status: "completed",
       updatedBy: req.user.id,
     });
+
+    await endLoanDeductionForEmployee(loan, tenantId, req.user.id);
 
     res.json({ loan });
   } catch (error: any) {
@@ -439,6 +540,8 @@ export async function writeOffLoan(
       reason: reason,
       updatedBy: req.user.id,
     });
+
+    await endLoanDeductionForEmployee(loan, tenantId, req.user.id);
 
     res.json({ loan });
   } catch (error: any) {

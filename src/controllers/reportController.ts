@@ -12,6 +12,7 @@ import {
   getTaxSummary,
   getEmployeePayrollHistory,
   getPayrollTrends,
+  getDeductionBreakdown,
 } from "../services/payrollReportService";
 import {
   getExpenseByCategory,
@@ -109,9 +110,18 @@ export async function getPayrollReports(
         result = await getPayrollTrends(tenantId, start, end);
         break;
 
+      case "deductions":
+        result = await getDeductionBreakdown(
+          tenantId,
+          start,
+          end,
+          departmentId as string | undefined
+        );
+        break;
+
       default:
         res.status(400).json({
-          error: `Invalid report type. Must be one of: summary, department, tax, history, trends`,
+          error: `Invalid report type. Must be one of: summary, department, tax, history, trends, deductions`,
         });
         return;
     }
@@ -312,6 +322,25 @@ export async function exportReport(
           reportData = await getPayrollTrends(tenantId, start, end);
           headers = ["month", "totalGross", "totalNet", "employeeCount"];
           title = "Payroll Trends";
+          break;
+
+        case "deductions":
+          reportData = await getDeductionBreakdown(
+            tenantId,
+            start,
+            end,
+            filters.departmentId as string | undefined
+          );
+          headers = [
+            "salaryComponentId",
+            "name",
+            "category",
+            "totalAmount",
+            "payrollCount",
+            "lineCount",
+            "employeeCount",
+          ];
+          title = "Deduction Breakdown";
           break;
         default:
           res.status(400).json({ error: `Invalid payroll report type: ${payrollType}` });

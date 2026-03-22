@@ -43,7 +43,7 @@ export async function getRemittances(
         tenantId,
         start,
         end,
-        taxType as "PAYE" | "NSSF" | "NHIF" | undefined
+        taxType as "PAYE" | "NSSF" | "NHIF" | "SHIF" | "HOUSING_LEVY" | undefined
       );
     }
 

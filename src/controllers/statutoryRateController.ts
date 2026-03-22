@@ -18,12 +18,12 @@ export async function getStatutoryRates(
 ): Promise<void> {
   try {
     requireTenantId(req); // Ensure user is tenant user
-    const { country = "Kenya" } = req.query;
+    const { country = "Kenya", includeInactive = "false" } = req.query;
 
     const rates = await StatutoryRate.findAll({
       where: {
         country: country as string,
-        isActive: true,
+        ...(String(includeInactive) === "true" ? {} : { isActive: true }),
       },
       order: [
         ["rateType", "ASC"],
@@ -61,8 +61,15 @@ export async function createStatutoryRate(
       return;
     }
 
+    const normalizedRateType = String(rateType).toLowerCase();
+
+    if (typeof config !== "object" || Array.isArray(config)) {
+      res.status(400).json({ error: "Config must be a valid object" });
+      return;
+    }
+
     const statutoryRate = await StatutoryRate.create({
-      rateType,
+      rateType: normalizedRateType,
       effectiveFrom,
       effectiveTo: effectiveTo || null,
       country: country || "Kenya",
@@ -99,7 +106,7 @@ export async function updateStatutoryRate(
 
     const tenantId = requireTenantId(req);
     const { id } = req.params;
-    const { effectiveFrom, effectiveTo, config, isActive } = req.body;
+    const { rateType, effectiveFrom, effectiveTo, country, config, isActive } = req.body;
 
     const statutoryRate = await StatutoryRate.findByPk(id);
 
@@ -127,12 +134,17 @@ export async function updateStatutoryRate(
     }
 
     await statutoryRate.update({
+      rateType:
+        rateType !== undefined
+          ? String(rateType).toLowerCase()
+          : statutoryRate.rateType,
       effectiveFrom:
         effectiveFrom !== undefined
           ? effectiveFrom
           : statutoryRate.effectiveFrom,
       effectiveTo:
         effectiveTo !== undefined ? effectiveTo : statutoryRate.effectiveTo,
+      country: country !== undefined ? country : statutoryRate.country,
       config: config !== undefined ? config : statutoryRate.config,
       isActive:
         isActive !== undefined ? isActive : statutoryRate.isActive,

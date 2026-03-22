@@ -4,6 +4,7 @@
 
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
+import { checkPermission } from "../middleware/rbac";
 import { Payroll, PayrollPeriod, Employee, PayrollItem } from "../models";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
@@ -25,9 +26,47 @@ export async function getPayrolls(
 
     const { periodId } = req.params;
 
-    // If periodId is not provided (e.g., called from /api/payrolls), return error
+    // Legacy portal fallback: allow /api/payrolls (no periodId) to return the
+    // logged-in employee's payrolls across periods.
     if (!periodId) {
-      res.status(400).json({ error: "Period ID is required" });
+      const canViewSelf = await checkPermission(req, "payslip:view:self");
+      if (!canViewSelf) {
+        res.status(400).json({ error: "Period ID is required" });
+        return;
+      }
+
+      const employee = await Employee.findOne({
+        where: { userId: req.user.id, tenantId },
+      });
+
+      if (!employee) {
+        res.status(404).json({ error: "Employee profile not found for this user" });
+        return;
+      }
+
+      const payrolls = await Payroll.findAll({
+        where: { employeeId: employee.id },
+        include: [
+          {
+            model: PayrollPeriod,
+            as: "payrollPeriod",
+            where: { tenantId },
+            required: true,
+          },
+          {
+            model: Employee,
+            as: "employee",
+            attributes: ["id", "firstName", "lastName", "employeeNumber", "jobTitle"],
+          },
+          {
+            model: PayrollItem,
+            as: "items",
+          },
+        ],
+        order: [[{ model: PayrollPeriod, as: "payrollPeriod" }, "payDate", "DESC"]],
+      });
+
+      res.json({ payrolls });
       return;
     }
 
@@ -44,10 +83,34 @@ export async function getPayrolls(
       return;
     }
 
+    // If the user isn't allowed to view all payrolls for the period, self-scope.
+    const canViewAllPayrolls =
+      !!req.user.isSystemAdmin ||
+      (await checkPermission(req, "payroll:view")) ||
+      (await checkPermission(req, "payroll:read"));
+
+    const payrollWhere: any = { payrollPeriodId: periodId };
+    if (!canViewAllPayrolls) {
+      const canViewSelf = await checkPermission(req, "payslip:view:self");
+      if (!canViewSelf) {
+        res.status(403).json({ error: "Access denied" });
+        return;
+      }
+
+      const employee = await Employee.findOne({
+        where: { userId: req.user.id, tenantId },
+      });
+
+      if (!employee) {
+        res.status(404).json({ error: "Employee profile not found for this user" });
+        return;
+      }
+
+      payrollWhere.employeeId = employee.id;
+    }
+
     const payrolls = await Payroll.findAll({
-      where: {
-        payrollPeriodId: periodId,
-      },
+      where: payrollWhere,
       include: [
         {
           model: Employee,
@@ -65,6 +128,58 @@ export async function getPayrolls(
     res.json({ payrolls });
   } catch (error: any) {
     logger.error("Get payrolls error:", error);
+    res.status(500).json({ error: "Failed to get payrolls" });
+  }
+}
+
+/**
+ * List payrolls for the authenticated user’s linked employee (member portal).
+ */
+export async function getMyPayrolls(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    const tenantId = requireTenantId(req);
+
+    const employee = await Employee.findOne({
+      where: { userId: req.user.id, tenantId },
+    });
+
+    if (!employee) {
+      res.status(404).json({ error: "Employee profile not found for this user" });
+      return;
+    }
+
+    const payrolls = await Payroll.findAll({
+      where: { employeeId: employee.id },
+      include: [
+        {
+          model: PayrollPeriod,
+          as: "payrollPeriod",
+          where: { tenantId },
+          required: true,
+        },
+        {
+          model: Employee,
+          as: "employee",
+          attributes: ["id", "firstName", "lastName", "employeeNumber", "jobTitle"],
+        },
+        {
+          model: PayrollItem,
+          as: "items",
+        },
+      ],
+      order: [[{ model: PayrollPeriod, as: "payrollPeriod" }, "payDate", "DESC"]],
+    });
+
+    res.json({ payrolls });
+  } catch (error: any) {
+    logger.error("Get my payrolls error:", error);
     res.status(500).json({ error: "Failed to get payrolls" });
   }
 }
@@ -115,6 +230,26 @@ export async function getPayroll(
     if (period.tenantId !== tenantId) {
       res.status(403).json({ error: "Access denied" });
       return;
+    }
+
+    const canViewAllPayrolls =
+      !!req.user.isSystemAdmin ||
+      (await checkPermission(req, "payroll:view")) ||
+      (await checkPermission(req, "payroll:read"));
+
+    if (!canViewAllPayrolls) {
+      const canViewSelf = await checkPermission(req, "payslip:view:self");
+      if (!canViewSelf) {
+        res.status(403).json({ error: "Access denied" });
+        return;
+      }
+      const employee = await Employee.findOne({
+        where: { userId: req.user.id, tenantId },
+      });
+      if (!employee || payroll.employeeId !== employee.id) {
+        res.status(403).json({ error: "Access denied" });
+        return;
+      }
     }
 
     res.json({ payroll });
@@ -236,8 +371,8 @@ export async function approvePayroll(
       return;
     }
 
-    if (payroll.status !== "pending") {
-      res.status(400).json({ error: "Payroll must be in pending status" });
+    if (payroll.status !== "calculated") {
+      res.status(400).json({ error: "Payroll must be in calculated status" });
       return;
     }
 

@@ -12,8 +12,15 @@ export interface PayrollCalculationResult {
   taxableIncome: number;
   statutoryDeductions: {
     paye: number;
+    payeGross: number;
     nssf: number;
-    nhif: number;
+    employerNssf: number;
+    shif: number;
+    housingLevy: number;
+    employerHousingLevy: number;
+    personalRelief: number;
+    insuranceRelief: number;
+    taxableIncomeAfterNssf: number;
   };
   internalDeductions: number;
   totalDeductions: number;
@@ -22,6 +29,7 @@ export interface PayrollCalculationResult {
     componentId: string;
     componentName: string;
     type: string;
+    category: string;
     amount: number;
   }>;
 }
@@ -72,6 +80,14 @@ export async function calculateGrossPay(
       `Found ${salaryComponents.length} active earning components for employee ${employeeId}`
     );
 
+    const amountByComponentId = new Map<string, number>();
+    salaryComponents.forEach((esc) => {
+      amountByComponentId.set(
+        esc.salaryComponentId,
+        parseFloat(esc.amount.toString())
+      );
+    });
+
     let grossPay = 0;
 
     for (const esc of salaryComponents) {
@@ -80,17 +96,18 @@ export async function calculateGrossPay(
 
       if (component.calculationType === "fixed") {
         grossPay += amount;
-      } else if (component.calculationType === "percentage") {
-        // For percentage calculations, we need the base amount
-        // This is a simplified version - in production, you'd need to handle percentageOf references
-        if (component.percentageValue) {
-          // Calculate percentage of gross pay (recursive calculation)
-          // For now, use the component's default amount or the employee's base salary
-          const baseAmount = component.defaultAmount
-            ? parseFloat(component.defaultAmount.toString())
-            : amount;
-          grossPay += (baseAmount * component.percentageValue) / 100;
-        }
+        continue;
+      }
+
+      if (component.calculationType === "percentage" && component.percentageValue) {
+        const referencedComponentId = component.percentageOf || undefined;
+        const fallbackBase = component.defaultAmount
+          ? parseFloat(component.defaultAmount.toString())
+          : amount;
+        const baseAmount = referencedComponentId
+          ? (amountByComponentId.get(referencedComponentId) ?? fallbackBase)
+          : fallbackBase;
+        grossPay += (baseAmount * component.percentageValue) / 100;
       }
     }
 
@@ -112,7 +129,18 @@ export async function calculateStatutoryDeductions(
   grossPay: number,
   taxableIncome: number,
   employee: Employee
-): Promise<{ paye: number; nssf: number; nhif: number }> {
+): Promise<{
+  paye: number;
+  payeGross: number;
+  nssf: number;
+  employerNssf: number;
+  shif: number;
+  housingLevy: number;
+  employerHousingLevy: number;
+  personalRelief: number;
+  insuranceRelief: number;
+  taxableIncomeAfterNssf: number;
+}> {
   const { calculateAllStatutoryDeductions } = await import("./statutoryCalculationService");
   return calculateAllStatutoryDeductions(grossPay, taxableIncome, employee);
 }
@@ -176,13 +204,14 @@ export async function calculateInternalDeductions(
  */
 export function calculateNetPay(
   grossPay: number,
-  statutoryDeductions: { paye: number; nssf: number; nhif: number },
+  statutoryDeductions: { paye: number; nssf: number; shif: number; housingLevy: number },
   internalDeductions: number
 ): number {
   const totalDeductions =
     statutoryDeductions.paye +
     statutoryDeductions.nssf +
-    statutoryDeductions.nhif +
+    statutoryDeductions.shif +
+    statutoryDeductions.housingLevy +
     internalDeductions;
 
   return Math.max(0, grossPay - totalDeductions);
@@ -226,7 +255,8 @@ export async function calculateEmployeePayroll(
     const totalDeductions =
       statutoryDeductions.paye +
       statutoryDeductions.nssf +
-      statutoryDeductions.nhif +
+      statutoryDeductions.shif +
+      statutoryDeductions.housingLevy +
       internalDeductions;
 
     logger.debug(
@@ -304,7 +334,15 @@ async function getComponentBreakdown(
   employeeId: string,
   periodStart: Date,
   periodEnd: Date
-): Promise<Array<{ componentId: string; componentName: string; type: string; amount: number }>> {
+): Promise<
+  Array<{
+    componentId: string;
+    componentName: string;
+    type: string;
+    category: string;
+    amount: number;
+  }>
+> {
   try {
     const periodStartStr = periodStart.toISOString().split("T")[0];
     const periodEndStr = periodEnd.toISOString().split("T")[0];
@@ -336,6 +374,7 @@ async function getComponentBreakdown(
         componentId: component.id,
         componentName: component.name,
         type: component.type,
+        category: component.category,
         amount: parseFloat(esc.amount.toString()),
       };
     });

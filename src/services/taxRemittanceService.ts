@@ -3,14 +3,20 @@
  * Handles tax remittance tracking and management
  */
 
-import { TaxRemittance, PayrollPeriod, Payroll } from "../models";
+import { TaxRemittance, PayrollPeriod, Payroll, PayrollItem } from "../models";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 export interface RemittanceDueDateConfig {
   payeDays: number;
   nssfDays: number;
   nhifDays: number;
+  shifDays: number;
+  housingLevyDays: number;
 }
 
 /**
@@ -18,13 +24,15 @@ export interface RemittanceDueDateConfig {
  */
 export function calculateRemittanceDueDate(
   periodEndDate: Date,
-  taxType: "PAYE" | "NSSF" | "NHIF",
+  taxType: "PAYE" | "NSSF" | "NHIF" | "SHIF" | "HOUSING_LEVY",
   config?: RemittanceDueDateConfig
 ): Date {
   const defaultConfig: RemittanceDueDateConfig = {
     payeDays: 9, // Usually 9th of following month
     nssfDays: 9,
     nhifDays: 9,
+    shifDays: 9,
+    housingLevyDays: 9,
   };
 
   const daysToAdd = config
@@ -32,8 +40,20 @@ export function calculateRemittanceDueDate(
       ? config.payeDays
       : taxType === "NSSF"
       ? config.nssfDays
-      : config.nhifDays
-    : defaultConfig[taxType === "PAYE" ? "payeDays" : taxType === "NSSF" ? "nssfDays" : "nhifDays"];
+      : taxType === "NHIF"
+      ? config.nhifDays
+      : taxType === "SHIF"
+      ? config.shifDays
+      : config.housingLevyDays
+    : taxType === "PAYE"
+    ? defaultConfig.payeDays
+    : taxType === "NSSF"
+    ? defaultConfig.nssfDays
+    : taxType === "NHIF"
+    ? defaultConfig.nhifDays
+    : taxType === "SHIF"
+    ? defaultConfig.shifDays
+    : defaultConfig.housingLevyDays;
 
   // Get the first day of the month following the period end date
   const nextMonth = new Date(periodEndDate);
@@ -70,12 +90,42 @@ export async function createRemittanceRecords(
     let totalPAYE = 0;
     let totalNSSF = 0;
     let totalNHIF = 0;
+    let totalSHIF = 0;
+    let totalHousingLevy = 0;
+    let employerNSSF = 0;
+    let employerHousingLevy = 0;
 
     for (const payroll of payrolls) {
       totalPAYE += parseFloat(payroll.payeAmount?.toString() || "0");
       totalNSSF += parseFloat(payroll.nssfAmount?.toString() || "0");
       totalNHIF += parseFloat(payroll.nhifAmount?.toString() || "0");
+      totalSHIF += parseFloat(payroll.shifAmount?.toString() || "0");
+      totalHousingLevy += parseFloat(payroll.housingLevyAmount?.toString() || "0");
     }
+
+    if (payrolls.length > 0) {
+      const payrollIds = payrolls.map((p) => p.id);
+      const employerItems = await PayrollItem.findAll({
+        where: {
+          payrollId: { [Op.in]: payrollIds },
+          type: "employer_contrib",
+          category: "statutory_employer",
+        },
+      });
+
+      for (const item of employerItems) {
+        const amount = parseFloat(item.amount?.toString() || "0");
+        if (item.name === "Employer NSSF") {
+          employerNSSF += amount;
+        } else if (item.name === "Employer Housing Levy") {
+          employerHousingLevy += amount;
+        }
+      }
+    }
+
+    // Combined remittance totals: employee + employer portions.
+    totalNSSF += employerNSSF;
+    totalHousingLevy += employerHousingLevy;
 
     const remittances: TaxRemittance[] = [];
 
@@ -104,6 +154,10 @@ export async function createRemittanceRecords(
         amount: totalNSSF,
         dueDate,
         status: "pending",
+        notes: JSON.stringify({
+          employee: round2(totalNSSF - employerNSSF),
+          employer: round2(employerNSSF),
+        }),
       });
       remittances.push(remittance);
     }
@@ -117,6 +171,36 @@ export async function createRemittanceRecords(
         amount: totalNHIF,
         dueDate,
         status: "pending",
+      });
+      remittances.push(remittance);
+    }
+
+    if (totalSHIF > 0) {
+      const dueDate = calculateRemittanceDueDate(periodEndDate, "SHIF");
+      const remittance = await TaxRemittance.create({
+        tenantId,
+        payrollPeriodId: period.id,
+        taxType: "SHIF",
+        amount: totalSHIF,
+        dueDate,
+        status: "pending",
+      });
+      remittances.push(remittance);
+    }
+
+    if (totalHousingLevy > 0) {
+      const dueDate = calculateRemittanceDueDate(periodEndDate, "HOUSING_LEVY");
+      const remittance = await TaxRemittance.create({
+        tenantId,
+        payrollPeriodId: period.id,
+        taxType: "HOUSING_LEVY",
+        amount: totalHousingLevy,
+        dueDate,
+        status: "pending",
+        notes: JSON.stringify({
+          employee: round2(totalHousingLevy - employerHousingLevy),
+          employer: round2(employerHousingLevy),
+        }),
       });
       remittances.push(remittance);
     }
@@ -208,7 +292,7 @@ export async function getRemittanceHistory(
   tenantId: string,
   startDate?: Date,
   endDate?: Date,
-  taxType?: "PAYE" | "NSSF" | "NHIF"
+  taxType?: "PAYE" | "NSSF" | "NHIF" | "SHIF" | "HOUSING_LEVY"
 ): Promise<TaxRemittance[]> {
   try {
     const whereClause: any = {
@@ -257,9 +341,13 @@ export async function calculateRemittanceTotals(
   pendingPAYE: number;
   pendingNSSF: number;
   pendingNHIF: number;
+  pendingSHIF: number;
+  pendingHOUSING_LEVY: number;
   remittedPAYE: number;
   remittedNSSF: number;
   remittedNHIF: number;
+  remittedSHIF: number;
+  remittedHOUSING_LEVY: number;
 }> {
   try {
     const whereClause: any = {
@@ -284,9 +372,13 @@ export async function calculateRemittanceTotals(
       pendingPAYE: 0,
       pendingNSSF: 0,
       pendingNHIF: 0,
+      pendingSHIF: 0,
+      pendingHOUSING_LEVY: 0,
       remittedPAYE: 0,
       remittedNSSF: 0,
       remittedNHIF: 0,
+      remittedSHIF: 0,
+      remittedHOUSING_LEVY: 0,
     };
 
     for (const remittance of remittances) {

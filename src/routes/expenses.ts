@@ -41,6 +41,7 @@ router.get(
 // POST /expenses - Create expense
 router.post(
   "/",
+  requireAnyPermission("expense:submit", "expense:create"),
   [
     body("categoryId").isUUID().withMessage("Category ID is required"),
     body("title")
@@ -73,6 +74,7 @@ router.post(
 // PUT /expenses/:id - Update expense
 router.put(
   "/:id",
+  requireAnyPermission("expense:submit", "expense:update"),
   [
     body("title")
       .optional()
@@ -107,7 +109,7 @@ router.put(
 // DELETE /expenses/:id - Delete expense
 router.delete(
   "/:id",
-  requireAnyPermission("expense:view", "expense:view:self"),
+  requireAnyPermission("expense:delete", "expense:view"),
   deleteExpense
 );
 

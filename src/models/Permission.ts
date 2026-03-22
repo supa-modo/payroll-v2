@@ -8,10 +8,11 @@ interface PermissionAttributes {
   description?: string | null;
   category: string;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 interface PermissionCreationAttributes
-  extends Optional<PermissionAttributes, "id" | "description" | "createdAt"> {}
+  extends Optional<PermissionAttributes, "id" | "description" | "createdAt" | "updatedAt"> {}
 
 class Permission
   extends Model<PermissionAttributes, PermissionCreationAttributes>
@@ -23,6 +24,7 @@ class Permission
   declare description: string | null | undefined;
   declare category: string;
   declare readonly createdAt: Date;
+  declare readonly updatedAt: Date;
 }
 
 Permission.init(
@@ -53,6 +55,10 @@ Permission.init(
     createdAt: {
       type: DataTypes.DATE,
       field: "created_at",
+    },
+    updatedAt: {
+      type: DataTypes.DATE,
+      field: "updated_at",
     },
   },
   {

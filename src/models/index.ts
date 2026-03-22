@@ -19,6 +19,8 @@ import EmployeeDocument from "./EmployeeDocument";
 import SalaryComponent from "./SalaryComponent";
 import EmployeeSalaryComponent from "./EmployeeSalaryComponent";
 import SalaryRevisionHistory from "./SalaryRevisionHistory";
+import SalaryRelief from "./SalaryRelief";
+import EmployeeSalaryRelief from "./EmployeeSalaryRelief";
 import PayrollPeriod from "./PayrollPeriod";
 import Payroll from "./Payroll";
 import PayrollItem from "./PayrollItem";
@@ -61,6 +63,7 @@ Tenant.hasMany(DataChangeHistory, { foreignKey: "tenantId", as: "dataChangeHisto
 Tenant.hasMany(Notification, { foreignKey: "tenantId", as: "notifications" });
 Tenant.hasMany(SystemSetting, { foreignKey: "tenantId", as: "systemSettings" });
 Tenant.hasMany(TaxRemittance, { foreignKey: "tenantId", as: "taxRemittances" });
+Tenant.hasMany(SalaryRelief, { foreignKey: "tenantId", as: "salaryReliefs" });
 
 // User Associations
 User.belongsTo(Tenant, { foreignKey: "tenantId", as: "tenant" });
@@ -115,6 +118,7 @@ Employee.hasMany(Payroll, { foreignKey: "employeeId", as: "payrolls" });
 Employee.hasMany(Expense, { foreignKey: "employeeId", as: "expenses" });
 Employee.hasMany(EmployeeLoan, { foreignKey: "employeeId", as: "loans" });
 Employee.hasMany(Department, { foreignKey: "managerId", as: "managedDepartments" });
+Employee.hasMany(EmployeeSalaryRelief, { foreignKey: "employeeId", as: "salaryReliefs" });
 
 // Role Associations
 Role.belongsTo(Tenant, { foreignKey: "tenantId", as: "tenant" });
@@ -195,6 +199,16 @@ EmployeeSalaryComponent.belongsTo(User, { foreignKey: "updatedBy", as: "updater"
 SalaryRevisionHistory.belongsTo(Employee, { foreignKey: "employeeId", as: "employee" });
 SalaryRevisionHistory.belongsTo(User, { foreignKey: "approvedBy", as: "approver" });
 SalaryRevisionHistory.belongsTo(User, { foreignKey: "createdBy", as: "creator" });
+SalaryRelief.belongsTo(Tenant, { foreignKey: "tenantId", as: "tenant" });
+SalaryRelief.hasMany(EmployeeSalaryRelief, {
+  foreignKey: "salaryReliefId",
+  as: "employeeReliefs",
+});
+EmployeeSalaryRelief.belongsTo(Employee, { foreignKey: "employeeId", as: "employee" });
+EmployeeSalaryRelief.belongsTo(SalaryRelief, {
+  foreignKey: "salaryReliefId",
+  as: "salaryRelief",
+});
 
 // PayrollPeriod Associations
 PayrollPeriod.belongsTo(Tenant, { foreignKey: "tenantId", as: "tenant" });
@@ -307,6 +321,8 @@ export {
   SalaryComponent,
   EmployeeSalaryComponent,
   SalaryRevisionHistory,
+  SalaryRelief,
+  EmployeeSalaryRelief,
   PayrollPeriod,
   Payroll,
   PayrollItem,

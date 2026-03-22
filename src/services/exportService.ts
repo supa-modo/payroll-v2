@@ -4,8 +4,8 @@
  */
 
 import ExcelJS from "exceljs";
-import PDFDocument from "pdfkit";
 import logger from "../utils/logger";
+import { generateReportPDF } from "./puppeteerPDFService";
 
 /**
  * Export data to CSV format
@@ -112,95 +112,22 @@ export async function exportToPDF(
     generatedAt?: Date;
   }
 ): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    try {
-      if (!Array.isArray(data) || data.length === 0) {
-        reject(new Error("No data to export"));
-        return;
-      }
-
-      // Limit data size to prevent memory issues (max 10k rows for PDF)
-      const maxRows = 10000;
-      const exportData = data.length > maxRows ? data.slice(0, maxRows) : data;
-
-      const doc = new PDFDocument({ margin: 50 });
-      const chunks: Buffer[] = [];
-
-      if (doc.on) {
-        doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-        doc.on("end", () => resolve(Buffer.concat(chunks)));
-        doc.on("error", (err: Error) => reject(err));
-      }
-
-      // Header
-      doc.fontSize(20).text(title, { align: "center" });
-      doc.moveDown();
-
-      if (options?.companyName) {
-        doc.fontSize(12).text(options.companyName, { align: "center" });
-        doc.moveDown();
-      }
-
-      if (options?.generatedAt) {
-        doc
-          .fontSize(10)
-          .text(
-            `Generated: ${options.generatedAt.toLocaleString()}`,
-            { align: "center" }
-          );
-        doc.moveDown(2);
-      }
-
-      // Table
-      const tableTop = doc.y;
-      const rowHeight = 25;
-      const cellPadding = 5;
-      const columnWidth = (doc.page.width - 100) / headers.length;
-
-      // Header row
-      let x = 50;
-      doc.fontSize(10).font("Helvetica-Bold");
-      for (const header of headers) {
-        doc
-          .rect(x, tableTop, columnWidth, rowHeight)
-          .stroke()
-          .text(header, x + cellPadding, tableTop + cellPadding, {
-            width: columnWidth - cellPadding * 2,
-            align: "left",
-          });
-        x += columnWidth;
-      }
-
-      // Data rows
-      doc.font("Helvetica");
-      let y = tableTop + rowHeight;
-      for (const row of exportData) {
-        x = 50;
-        for (const header of headers) {
-          const value = row[header] ?? "";
-          doc
-            .rect(x, y, columnWidth, rowHeight)
-            .stroke()
-            .text(String(value), x + cellPadding, y + cellPadding, {
-              width: columnWidth - cellPadding * 2,
-              align: "left",
-            });
-          x += columnWidth;
-        }
-        y += rowHeight;
-
-        // Check if we need a new page
-        if (y > doc.page.height - 50) {
-          doc.addPage();
-          y = 50;
-        }
-      }
-
-      doc.end();
-    } catch (error: any) {
-      logger.error("Error exporting to PDF:", error);
-      reject(error);
+  try {
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error("No data to export");
     }
-  });
+
+    // Limit data size to prevent memory issues (max 10k rows for PDF)
+    const maxRows = 10000;
+    const exportData = data.length > maxRows ? data.slice(0, maxRows) : data;
+
+    return await generateReportPDF(exportData, headers, title, {
+      companyName: options?.companyName,
+      generatedAt: options?.generatedAt,
+    });
+  } catch (error: any) {
+    logger.error("Error exporting to PDF:", error);
+    throw error;
+  }
 }
 

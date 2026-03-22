@@ -14,6 +14,17 @@ import { trackChange } from "../services/dataChangeHistoryService";
 import { getRelativeFilePath, deleteFile } from "../middleware/upload";
 import fs from "fs";
 
+function isAdminUser(req: AuthRequest): boolean {
+  if (!req.user) return false;
+  if (req.user.isSystemAdmin) return true;
+  const hasAdminRole =
+    req.user.roles?.some((role) => {
+      const normalized = role.toLowerCase();
+      return normalized === "admin" || normalized === "super_admin";
+    }) || false;
+  return hasAdminRole || req.user.role?.toLowerCase() === "admin";
+}
+
 /**
  * Get all employees for tenant
  */
@@ -430,6 +441,9 @@ export async function createEmployee(
     // Hash password
     const hashedPassword = await bcrypt.hash(userPassword, 10);
 
+    const finalPhone = toNullIfEmpty(phonePrimary);
+    const finalAvatarUrl = toNullIfEmpty(employee.photoUrl ?? photoUrl);
+
     // Create user account
     const createdUser = await User.create(
       {
@@ -438,6 +452,8 @@ export async function createEmployee(
         password: hashedPassword,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
+        phone: finalPhone ?? undefined,
+        avatarUrl: finalAvatarUrl ?? undefined,
         role: role.name.toLowerCase(), // Legacy field
         isActive: true,
         isEmailVerified: false,
@@ -450,11 +466,37 @@ export async function createEmployee(
     await employee.update({ userId: createdUser.id }, { transaction });
 
     // Assign role to user
+    // `user_roles.department_id` is part of the primary key in this schema,
+    // so it must be present. If the client didn't provide a departmentId,
+    // fall back to the first department for the tenant.
+    let finalDepartmentId = departmentId;
+    if (!finalDepartmentId) {
+      const defaultDepartment = await Department.findOne({
+        where: { tenantId },
+        transaction,
+      });
+      if (defaultDepartment) {
+        finalDepartmentId = defaultDepartment.id;
+      } else {
+        const createdDefaultDepartment = await Department.create(
+          {
+            tenantId,
+            name: "Default Department",
+            code: "DEFAULT",
+            isActive: true,
+            createdBy: req.user.id,
+          } as any,
+          { transaction }
+        );
+        finalDepartmentId = createdDefaultDepartment.id;
+      }
+    }
+
     await UserRole.create(
       {
         userId: createdUser.id,
         roleId: role.id,
-        departmentId: departmentId || null,
+        departmentId: finalDepartmentId,
         assignedBy: req.user.id,
       },
       { transaction }
@@ -732,6 +774,15 @@ export async function updateEmployee(
 
     // Map email to workEmail for backward compatibility
     const finalWorkEmail = workEmail || email;
+    const isEmailUpdateRequested = workEmail !== undefined || email !== undefined;
+
+    if (isEmailUpdateRequested && !isAdminUser(req)) {
+      await transaction.rollback();
+      res.status(403).json({
+        error: "Only admins can change employee work email",
+      });
+      return;
+    }
 
     // Helper function to convert empty strings to null/undefined
     const toNullIfEmpty = (value: any) => {
@@ -782,6 +833,90 @@ export async function updateEmployee(
     if (emergencyContactName !== undefined) sanitizedData.emergencyContactName = toNullIfEmpty(emergencyContactName);
     if (emergencyContactPhone !== undefined) sanitizedData.emergencyContactPhone = toNullIfEmpty(emergencyContactPhone);
     if (emergencyContactRelationship !== undefined) sanitizedData.emergencyContactRelationship = toNullIfEmpty(emergencyContactRelationship);
+
+    const employeeUserId = employee.userId;
+    const shouldSyncLinkedUser =
+      !!employeeUserId &&
+      (isEmailUpdateRequested ||
+        firstName !== undefined ||
+        lastName !== undefined ||
+        phonePrimary !== undefined ||
+        photoUrl !== undefined);
+
+    if (shouldSyncLinkedUser) {
+      if (isEmailUpdateRequested && !employeeUserId) {
+        await transaction.rollback();
+        res.status(400).json({
+          error: "Cannot update work email because employee is not linked to a user account",
+        });
+        return;
+      }
+
+      const linkedUser = await User.findOne({
+        where: { id: employeeUserId, tenantId },
+        transaction,
+      });
+
+      if (!linkedUser) {
+        await transaction.rollback();
+        res.status(404).json({
+          error: "Linked user account not found for this employee",
+        });
+        return;
+      }
+
+      const linkedUserUpdates: any = {};
+
+      // Keep the linked user profile consistent with the employee.
+      if (firstName !== undefined) linkedUserUpdates.firstName = firstName.trim();
+      if (lastName !== undefined) linkedUserUpdates.lastName = lastName.trim();
+      if (phonePrimary !== undefined) {
+        linkedUserUpdates.phone = toNullIfEmpty(phonePrimary);
+      }
+      if (photoUrl !== undefined) {
+        linkedUserUpdates.avatarUrl = toNullIfEmpty(photoUrl);
+      }
+
+      // Email update (admin-only guarded above) with tenant-scoped uniqueness check.
+      if (isEmailUpdateRequested) {
+        const normalizedWorkEmail = finalWorkEmail
+          ? String(finalWorkEmail).trim().toLowerCase()
+          : null;
+
+        if (!normalizedWorkEmail) {
+          await transaction.rollback();
+          res.status(400).json({
+            error: "Work email cannot be empty",
+          });
+          return;
+        }
+
+        sanitizedData.workEmail = normalizedWorkEmail;
+
+        const emailConflict = await User.findOne({
+          where: {
+            tenantId,
+            id: { [Op.ne]: linkedUser.id },
+            email: { [Op.iLike]: normalizedWorkEmail },
+          },
+          transaction,
+        });
+
+        if (emailConflict) {
+          await transaction.rollback();
+          res.status(409).json({
+            error: "User account with this email already exists",
+          });
+          return;
+        }
+
+        linkedUserUpdates.email = normalizedWorkEmail;
+      }
+
+      if (Object.keys(linkedUserUpdates).length > 0) {
+        await linkedUser.update(linkedUserUpdates, { transaction });
+      }
+    }
 
     // Track changes for sensitive fields within transaction
     const fieldsToTrack = [
@@ -901,6 +1036,16 @@ export async function uploadEmployeePhoto(
 
     // Reload to get updated data
     await employee.reload();
+
+    // Keep the linked User avatarUrl in sync with the employee photoUrl.
+    if (employee.userId) {
+      const linkedUser = await User.findOne({
+        where: { id: employee.userId, tenantId },
+      });
+      if (linkedUser) {
+        await linkedUser.update({ avatarUrl: relativePath });
+      }
+    }
 
     res.json({
       message: "Photo uploaded successfully",

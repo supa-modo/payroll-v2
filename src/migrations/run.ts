@@ -26,7 +26,7 @@ function getMigrationFiles(): string[] {
 /**
  * Run migrations up
  */
-async function migrateUp(): Promise<void> {
+export async function migrateUp(): Promise<void> {
   try {
     console.log("🔄 Running migrations up...");
 
@@ -114,6 +114,10 @@ async function main(): Promise<void> {
 }
 
 // Run the migration
-main();
+// Only run migrations when this script is executed directly.
+// (Importing it from other scripts like `dbReset.ts` should not trigger `main()`.)
+if (require.main === module) {
+  main();
+}
 
 

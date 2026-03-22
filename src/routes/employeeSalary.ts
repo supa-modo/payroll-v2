@@ -57,7 +57,8 @@ router.post(
 // GET /employees/:employeeId/salary/history - Get salary revision history
 router.get(
   "/history",
-  requireAnyPermission("salary:view", "salary:assign", "employee:read"),
+  // Allow self-service employees to view their own history.
+  requireAnyPermission("salary:view", "salary:assign", "employee:read", "employee:read:self"),
   getSalaryRevisionHistory
 );
 
@@ -74,18 +75,46 @@ router.post(
       .withMessage("Reason is required")
       .isLength({ max: 500 })
       .withMessage("Reason must be less than 500 characters"),
-    body("components")
+    body("modifiedComponents")
       .optional()
       .isArray()
-      .withMessage("Components must be an array"),
-    body("components.*.salaryComponentId")
+      .withMessage("Modified components must be an array"),
+    body("modifiedComponents.*.id")
+      .optional()
+      .isUUID()
+      .withMessage("Invalid modified component ID"),
+    body("modifiedComponents.*.amount")
+      .optional()
+      .isFloat({ min: 0 })
+      .withMessage("Modified amount must be a positive number"),
+    body("modifiedComponents.*.effectiveTo")
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage("Modified effectiveTo must be a valid date"),
+    body("newComponents")
+      .optional()
+      .isArray()
+      .withMessage("New components must be an array"),
+    body("newComponents.*.salaryComponentId")
       .optional()
       .isUUID()
       .withMessage("Invalid salary component ID"),
-    body("components.*.amount")
+    body("newComponents.*.amount")
       .optional()
       .isFloat({ min: 0 })
       .withMessage("Amount must be a positive number"),
+    body("newComponents.*.effectiveTo")
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage("New component effectiveTo must be a valid date"),
+    body("deletedComponentIds")
+      .optional()
+      .isArray()
+      .withMessage("Deleted component IDs must be an array"),
+    body("deletedComponentIds.*")
+      .optional()
+      .isUUID()
+      .withMessage("Invalid deleted component ID"),
   ],
   handleValidationErrors,
   requirePermission("salary:assign"),

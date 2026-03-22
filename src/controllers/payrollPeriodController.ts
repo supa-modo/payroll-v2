@@ -4,7 +4,7 @@
 
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
-import { PayrollPeriod, Payroll, Employee, LoanRepayment, PayrollItem, Payslip, EmployeeSalaryComponent, SalaryComponent } from "../models";
+import { PayrollPeriod, Payroll, Employee, LoanRepayment, PayrollItem, Payslip, EmployeeSalaryComponent, SalaryComponent, EmployeeLoan } from "../models";
 import { sequelize } from "../config/database";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
@@ -120,7 +120,6 @@ async function calculatePeriodPreview(
   const periodStartStr = periodStart.toISOString().split("T")[0];
   const periodEndStr = periodEnd.toISOString().split("T")[0];
 
-  // Get all active employees
   const activeEmployees = await Employee.findAll({
     where: {
       tenantId,
@@ -128,36 +127,32 @@ async function calculatePeriodPreview(
     },
     attributes: ["id"],
   });
-
-  let employeesWithSalary = 0;
-
-  // For each employee, check if they have active salary components for the period
-  for (const employee of activeEmployees) {
-    const activeComponents = await EmployeeSalaryComponent.findOne({
-      where: {
-        employeeId: employee.id,
-        effectiveFrom: { [Op.lte]: periodEndStr },
-        [Op.or]: [
-          { effectiveTo: null },
-          { effectiveTo: { [Op.gte]: periodStartStr } },
-        ],
-      },
-      include: [
-        {
-          model: SalaryComponent,
-          as: "salaryComponent",
-          required: true,
-          where: {
-            isActive: true,
-          },
-        },
-      ],
-    });
-
-    if (activeComponents) {
-      employeesWithSalary++;
-    }
+  const employeeIds = activeEmployees.map((e) => e.id);
+  if (employeeIds.length === 0) {
+    return { employeeCount: 0 };
   }
+
+  const activeComponents = await EmployeeSalaryComponent.findAll({
+    where: {
+      employeeId: { [Op.in]: employeeIds },
+      effectiveFrom: { [Op.lte]: periodEndStr },
+      [Op.or]: [{ effectiveTo: null }, { effectiveTo: { [Op.gte]: periodStartStr } }],
+    },
+    include: [
+      {
+        model: SalaryComponent,
+        as: "salaryComponent",
+        required: true,
+        where: {
+          isActive: true,
+        },
+      },
+    ],
+    attributes: ["employeeId"],
+  });
+  const employeesWithSalary = new Set(
+    activeComponents.map((component) => component.employeeId)
+  ).size;
 
   logger.debug(
     `Period preview: ${employeesWithSalary} out of ${activeEmployees.length} active employees have salary components for period ${periodStartStr} to ${periodEndStr}`
@@ -200,7 +195,6 @@ export async function createPayrollPeriod(
             ],
           },
         ],
-        status: { [Op.ne]: "locked" },
       },
     });
 
@@ -349,6 +343,34 @@ export async function processPayrollPeriod(
       transaction,
     });
 
+    const periodStartStr = new Date(period.startDate).toISOString().split("T")[0];
+    const periodEndStr = new Date(period.endDate).toISOString().split("T")[0];
+    const employeeIds = employees.map((employee) => employee.id);
+    const activeEmployeeComponentRows = employeeIds.length
+      ? await EmployeeSalaryComponent.findAll({
+          where: {
+            employeeId: { [Op.in]: employeeIds },
+            effectiveFrom: { [Op.lte]: periodEndStr },
+            [Op.or]: [{ effectiveTo: null }, { effectiveTo: { [Op.gte]: periodStartStr } }],
+          },
+          include: [
+            {
+              model: SalaryComponent,
+              as: "salaryComponent",
+              required: true,
+              where: {
+                isActive: true,
+              },
+            },
+          ],
+          attributes: ["employeeId"],
+          transaction,
+        })
+      : [];
+    const eligibleEmployeeIds = new Set(
+      activeEmployeeComponentRows.map((row) => row.employeeId)
+    );
+
     logger.info(
       `Processing payroll period ${period.id}: Found ${employees.length} active employees`
     );
@@ -362,6 +384,11 @@ export async function processPayrollPeriod(
     // Process payroll for each employee within transaction
     for (const employee of employees) {
       try {
+        if (!eligibleEmployeeIds.has(employee.id)) {
+          skippedCount++;
+          continue;
+        }
+
         const calculation = await calculateEmployeePayroll(
           employee,
           new Date(period.startDate),
@@ -382,6 +409,42 @@ export async function processPayrollPeriod(
         });
 
         if (payroll) {
+          // Roll back previously posted loan repayments for this payroll before reprocessing.
+          const existingRepayments = await LoanRepayment.findAll({
+            where: { payrollId: payroll.id },
+            transaction,
+          });
+          for (const repayment of existingRepayments) {
+            const existingLoan = await EmployeeLoan.findByPk(repayment.loanId, {
+              transaction,
+            });
+            if (existingLoan) {
+              const revertedBalance =
+                parseFloat(existingLoan.remainingBalance.toString()) +
+                parseFloat(repayment.amount.toString());
+              const revertedPaid =
+                parseFloat(existingLoan.totalPaid.toString()) -
+                parseFloat(repayment.amount.toString());
+              await existingLoan.update(
+                {
+                  remainingBalance: Math.max(0, revertedBalance),
+                  totalPaid: Math.max(0, revertedPaid),
+                  status: "active",
+                  updatedBy: req.user.id,
+                },
+                { transaction }
+              );
+            }
+          }
+          await LoanRepayment.destroy({
+            where: { payrollId: payroll.id },
+            transaction,
+          });
+          await PayrollItem.destroy({
+            where: { payrollId: payroll.id },
+            transaction,
+          });
+
           // Update existing payroll within transaction
           await payroll.update(
             {
@@ -391,7 +454,12 @@ export async function processPayrollPeriod(
               netPay: calculation.netPay,
               payeAmount: calculation.statutoryDeductions.paye,
               nssfAmount: calculation.statutoryDeductions.nssf,
-              nhifAmount: calculation.statutoryDeductions.nhif,
+              nhifAmount: 0,
+              shifAmount: calculation.statutoryDeductions.shif,
+              housingLevyAmount: calculation.statutoryDeductions.housingLevy,
+              taxableIncome: calculation.statutoryDeductions.taxableIncomeAfterNssf,
+              personalRelief: calculation.statutoryDeductions.personalRelief,
+              insuranceRelief: calculation.statutoryDeductions.insuranceRelief,
               status: "calculated",
             },
             { transaction }
@@ -408,12 +476,117 @@ export async function processPayrollPeriod(
               netPay: calculation.netPay,
               payeAmount: calculation.statutoryDeductions.paye,
               nssfAmount: calculation.statutoryDeductions.nssf,
-              nhifAmount: calculation.statutoryDeductions.nhif,
+              nhifAmount: 0,
+              shifAmount: calculation.statutoryDeductions.shif,
+              housingLevyAmount: calculation.statutoryDeductions.housingLevy,
+              taxableIncome: calculation.statutoryDeductions.taxableIncomeAfterNssf,
+              personalRelief: calculation.statutoryDeductions.personalRelief,
+              insuranceRelief: calculation.statutoryDeductions.insuranceRelief,
               status: "calculated",
             },
             { transaction }
           );
         }
+
+        const createdAt = new Date();
+        const payrollItems = [
+          ...calculation.components.map((component) => ({
+            payrollId: payroll.id,
+            salaryComponentId: component.componentId,
+            name: component.componentName,
+            type: component.type,
+            category: component.category || "salary_component",
+            amount: component.amount,
+            calculationDetails: null,
+            // PayrollItem model has `timestamps: false`, so set created_at explicitly.
+            createdAt,
+          })),
+          {
+            payrollId: payroll.id,
+            salaryComponentId: null,
+            name: "PAYE",
+            type: "deduction",
+            category: "statutory",
+            amount: calculation.statutoryDeductions.paye,
+            calculationDetails: {
+              personalRelief: calculation.statutoryDeductions.personalRelief,
+              insuranceRelief: calculation.statutoryDeductions.insuranceRelief,
+              // Net PAYE is `amount` (after relief). Keep gross tax for transparency.
+              grossTax: calculation.statutoryDeductions.payeGross,
+              taxableIncomeAfterNssf: calculation.statutoryDeductions.taxableIncomeAfterNssf,
+            },
+            createdAt,
+          },
+          {
+            payrollId: payroll.id,
+            salaryComponentId: null,
+            name: "NSSF",
+            type: "deduction",
+            category: "statutory",
+            amount: calculation.statutoryDeductions.nssf,
+            calculationDetails: null,
+            createdAt,
+          },
+          {
+            payrollId: payroll.id,
+            salaryComponentId: null,
+            name: "SHIF",
+            type: "deduction",
+            category: "statutory",
+            amount: calculation.statutoryDeductions.shif,
+            calculationDetails: null,
+            createdAt,
+          },
+          {
+            payrollId: payroll.id,
+            salaryComponentId: null,
+            name: "Housing Levy",
+            type: "deduction",
+            category: "statutory",
+            amount: calculation.statutoryDeductions.housingLevy,
+            calculationDetails: null,
+            createdAt,
+          },
+          {
+            payrollId: payroll.id,
+            salaryComponentId: null,
+            name: "Employer NSSF",
+            type: "employer_contrib",
+            category: "statutory_employer",
+            amount: calculation.statutoryDeductions.employerNssf,
+            calculationDetails: null,
+            createdAt,
+          },
+          {
+            payrollId: payroll.id,
+            salaryComponentId: null,
+            name: "Employer Housing Levy",
+            type: "employer_contrib",
+            category: "statutory_employer",
+            amount: calculation.statutoryDeductions.employerHousingLevy,
+            calculationDetails: null,
+            createdAt,
+          },
+        ];
+        await PayrollItem.bulkCreate(payrollItems, { transaction });
+
+        // Store loan repayment deductions as PayrollItem lines so they can
+        // appear in unified deduction reporting and payslips.
+        const loanPayrollItems: Array<{
+          payrollId: string;
+          salaryComponentId: null;
+          name: string;
+          type: "deduction";
+          category: "loan";
+          amount: number;
+          calculationDetails: Record<string, any>;
+          createdAt: Date;
+        }> = [];
+
+        const truncateName = (value: string, maxLen: number = 100) => {
+          if (value.length <= maxLen) return value;
+          return value.slice(0, maxLen);
+        };
 
         // Process loan repayments within transaction
         const activeLoans = await getActiveLoansForPeriod(
@@ -446,9 +619,27 @@ export async function processPayrollPeriod(
               balanceAfter: newBalance,
               notes: `Automatic deduction from payroll period ${period.name}`,
               createdBy: req.user.id,
+              createdAt: new Date(),
             },
             { transaction }
           );
+
+          loanPayrollItems.push({
+            payrollId: payroll.id,
+            salaryComponentId: null,
+            name: truncateName(
+              `Loan repayment (${loan.loanType} ${loan.loanNumber})`
+            ),
+            type: "deduction",
+            category: "loan",
+            amount: deductionAmount,
+            calculationDetails: {
+              loanId: loan.id,
+              loanNumber: loan.loanNumber,
+              loanType: loan.loanType,
+            },
+            createdAt,
+          });
 
           // Update loan within transaction
           const updatedStatus = newBalance <= 0 ? "completed" : "active";
@@ -461,6 +652,10 @@ export async function processPayrollPeriod(
             },
             { transaction }
           );
+        }
+
+        if (loanPayrollItems.length > 0) {
+          await PayrollItem.bulkCreate(loanPayrollItems, { transaction });
         }
 
         totalGross += calculation.grossPay;
@@ -496,6 +691,11 @@ export async function processPayrollPeriod(
                 payeAmount: 0,
                 nssfAmount: 0,
                 nhifAmount: 0,
+                shifAmount: 0,
+                housingLevyAmount: 0,
+                taxableIncome: 0,
+                personalRelief: 0,
+                insuranceRelief: 0,
                 status: "error",
               },
               { transaction }
@@ -715,6 +915,10 @@ export async function getPayrollPeriodSummary(
           employee: p.get("employee"),
           grossPay: p.grossPay,
           totalDeductions: p.totalDeductions,
+          payeAmount: p.payeAmount,
+          nssfAmount: p.nssfAmount,
+          shifAmount: p.shifAmount,
+          housingLevyAmount: p.housingLevyAmount,
           netPay: p.netPay,
           status: p.status,
         })),

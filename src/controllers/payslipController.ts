@@ -227,3 +227,95 @@ export async function downloadPayslip(
   }
 }
 
+/**
+ * Member portal self-service: generate a payslip PDF only for the
+ * logged-in user's linked employee.
+ */
+export async function generateMyPayslipPDF(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+
+    const tenantId = requireTenantId(req);
+    const { payrollId } = req.params;
+
+    const employee = await Employee.findOne({
+      where: { userId: req.user.id, tenantId },
+    });
+
+    if (!employee) {
+      res.status(404).json({ error: "Employee profile not found for this user" });
+      return;
+    }
+
+    const payroll = await Payroll.findOne({
+      where: {
+        id: payrollId,
+        employeeId: employee.id,
+      },
+      include: [
+        {
+          model: PayrollPeriod,
+          as: "payrollPeriod",
+        },
+        {
+          model: Employee,
+          as: "employee",
+        },
+        {
+          model: PayrollItem,
+          as: "items",
+        },
+      ],
+    });
+
+    if (!payroll) {
+      res.status(404).json({ error: "Payroll not found" });
+      return;
+    }
+
+    const period = payroll.get("payrollPeriod") as PayrollPeriod;
+    if (period.tenantId !== tenantId) {
+      res.status(403).json({ error: "Access denied" });
+      return;
+    }
+
+    const pdfBuffer = await generatePayslipPDF(payroll);
+
+    const payslipNumber = `PS-${payroll.id.substring(0, 8).toUpperCase()}`;
+    const [payslip] = await Payslip.findOrCreate({
+      where: { payrollId: payroll.id },
+      defaults: {
+        payrollId: payroll.id,
+        payslipNumber,
+        filePath: `payslips/${payroll.id}.pdf`,
+        generatedAt: new Date(),
+        generatedBy: req.user.id,
+        downloadCount: 0,
+      },
+    });
+
+    if (!payslip.isNewRecord) {
+      await payslip.update({
+        generatedAt: new Date(),
+        generatedBy: req.user.id,
+      });
+    }
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="payslip-${payroll.id}.pdf"`
+    );
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    logger.error("Generate my payslip error:", error);
+    res.status(500).json({ error: "Failed to generate payslip" });
+  }
+}
+

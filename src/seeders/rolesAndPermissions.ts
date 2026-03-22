@@ -39,9 +39,13 @@ const DEFAULT_PERMISSIONS = [
 
   // Expense permissions
   { name: "expense:read", displayName: "View Expenses", description: "View expense information" },
+  { name: "expense:view", displayName: "View All Expenses", description: "View all expenses" },
+  { name: "expense:view:self", displayName: "View Own Expenses", description: "View own expenses" },
   { name: "expense:create", displayName: "Create Expenses", description: "Submit expenses" },
+  { name: "expense:submit", displayName: "Submit Expenses", description: "Submit expenses for approval" },
   { name: "expense:update", displayName: "Update Expenses", description: "Update expense information" },
   { name: "expense:approve", displayName: "Approve Expenses", description: "Approve expense requests" },
+  { name: "expense:pay", displayName: "Mark Expenses Paid", description: "Mark approved expenses as paid" },
   { name: "expense:delete", displayName: "Delete Expenses", description: "Delete expenses" },
 
   // Loan permissions
@@ -59,6 +63,9 @@ const DEFAULT_PERMISSIONS = [
   { name: "admin:users", displayName: "Manage Users", description: "Manage user accounts" },
   { name: "admin:roles", displayName: "Manage Roles", description: "Manage roles and permissions" },
   { name: "admin:settings", displayName: "Manage Settings", description: "Manage system settings" },
+  { name: "employee:read:self", displayName: "View Own Profile", description: "View own employee profile" },
+  { name: "employee:update:self", displayName: "Update Own Profile", description: "Update own employee profile" },
+  { name: "payslip:view:self", displayName: "View Own Payslips", description: "View own payslips" },
 ];
 
 /**
@@ -133,10 +140,11 @@ const ROLE_DEFINITIONS = [
     description: "Basic employee access",
     isSystemRole: true,
     permissions: [
-      "employee:read", // Can view own profile
-      "expense:read",
-      "expense:create",
-      "expense:update",
+      "employee:read:self",
+      "employee:update:self",
+      "expense:submit",
+      "expense:view:self",
+      "payslip:view:self",
       "loan:read",
     ],
   },

@@ -35,9 +35,9 @@ const databaseConfig = {
   test: {
     host: process.env.DB_HOST || "localhost",
     port: parseInt(process.env.DB_PORT || "5433", 10),
-    database: process.env.DB_NAME || "payroll_test",
-    username: process.env.DB_USER || "payroll",
-    password: process.env.DB_PASSWORD || "payroll123",
+    database: process.env.DB_NAME_TEST || "payroll_test",
+    username: process.env.DB_USER_TEST || "payroll",
+    password: process.env.DB_PASSWORD_TEST || "payroll123",
     dialect: "postgres" as const,
     logging: false,
     pool: {
@@ -50,19 +50,27 @@ const databaseConfig = {
     dialectOptions: undefined as any,
   },
   production: {
-    host: process.env.DB_HOST || (() => {
-      throw new Error("DB_HOST is required in production");
-    })(),
+    host:
+      process.env.DB_HOST ||
+      (() => {
+        throw new Error("DB_HOST is required in production");
+      })(),
     port: parseInt(process.env.DB_PORT || "5432", 10),
-    database: process.env.DB_NAME || (() => {
-      throw new Error("DB_NAME is required in production");
-    })(),
-    username: process.env.DB_USER || (() => {
-      throw new Error("DB_USER is required in production");
-    })(),
-    password: process.env.DB_PASSWORD || (() => {
-      throw new Error("DB_PASSWORD is required in production");
-    })(),
+    database:
+      process.env.DB_NAME ||
+      (() => {
+        throw new Error("DB_NAME is required in production");
+      })(),
+    username:
+      process.env.DB_USER ||
+      (() => {
+        throw new Error("DB_USER is required in production");
+      })(),
+    password:
+      process.env.DB_PASSWORD ||
+      (() => {
+        throw new Error("DB_PASSWORD is required in production");
+      })(),
     dialect: "postgres" as const,
     logging: false,
     pool: {
@@ -124,7 +132,7 @@ export const sequelize = new Sequelize(
       timestamps: true,
       underscored: true,
     },
-  }
+  },
 );
 
 /**
@@ -142,4 +150,3 @@ export async function testConnection(): Promise<boolean> {
 }
 
 export default sequelize;
-

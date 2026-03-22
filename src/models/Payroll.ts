@@ -17,6 +17,11 @@ interface PayrollAttributes {
   payeAmount: number;
   nssfAmount: number;
   nhifAmount: number;
+  shifAmount: number;
+  housingLevyAmount: number;
+  taxableIncome: number;
+  personalRelief: number;
+  insuranceRelief: number;
   status: string;
   paidAt?: Date | null;
   paymentReference?: string | null;
@@ -27,7 +32,7 @@ interface PayrollAttributes {
 interface PayrollCreationAttributes
   extends Optional<
     PayrollAttributes,
-    "id" | "paymentMethod" | "bankAccount" | "mpesaPhone" | "payeAmount" | "nssfAmount" | "nhifAmount" | "status" | "paidAt" | "paymentReference" | "createdAt" | "updatedAt"
+    "id" | "paymentMethod" | "bankAccount" | "mpesaPhone" | "payeAmount" | "nssfAmount" | "nhifAmount" | "shifAmount" | "housingLevyAmount" | "taxableIncome" | "personalRelief" | "insuranceRelief" | "status" | "paidAt" | "paymentReference" | "createdAt" | "updatedAt"
   > {}
 
 class Payroll
@@ -47,6 +52,11 @@ class Payroll
   declare payeAmount: number;
   declare nssfAmount: number;
   declare nhifAmount: number;
+  declare shifAmount: number;
+  declare housingLevyAmount: number;
+  declare taxableIncome: number;
+  declare personalRelief: number;
+  declare insuranceRelief: number;
   declare status: string;
   declare paidAt: Date | null | undefined;
   declare paymentReference: string | null | undefined;
@@ -129,11 +139,36 @@ Payroll.init(
       defaultValue: 0,
       field: "nhif_amount",
     },
+    shifAmount: {
+      type: DataTypes.DECIMAL(15, 2),
+      defaultValue: 0,
+      field: "shif_amount",
+    },
+    housingLevyAmount: {
+      type: DataTypes.DECIMAL(15, 2),
+      defaultValue: 0,
+      field: "housing_levy_amount",
+    },
+    taxableIncome: {
+      type: DataTypes.DECIMAL(15, 2),
+      defaultValue: 0,
+      field: "taxable_income",
+    },
+    personalRelief: {
+      type: DataTypes.DECIMAL(15, 2),
+      defaultValue: 0,
+      field: "personal_relief",
+    },
+    insuranceRelief: {
+      type: DataTypes.DECIMAL(15, 2),
+      defaultValue: 0,
+      field: "insurance_relief",
+    },
     status: {
       type: DataTypes.STRING(20),
       defaultValue: "calculated",
       validate: {
-        isIn: [["calculated", "approved", "paid", "failed"]],
+        isIn: [["calculated", "approved", "paid", "failed", "error"]],
       },
     },
     paidAt: {

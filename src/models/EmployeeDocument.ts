@@ -16,6 +16,7 @@ interface EmployeeDocumentAttributes {
   verifiedBy?: string | null;
   verifiedAt?: Date | null;
   createdAt: Date;
+  updatedAt: Date;
   createdBy?: string | null;
   deletedAt?: Date | null;
 }
@@ -23,7 +24,7 @@ interface EmployeeDocumentAttributes {
 interface EmployeeDocumentCreationAttributes
   extends Optional<
     EmployeeDocumentAttributes,
-    "id" | "fileSize" | "mimeType" | "expiryDate" | "isVerified" | "verifiedBy" | "verifiedAt" | "createdAt" | "createdBy" | "deletedAt"
+    "id" | "fileSize" | "mimeType" | "expiryDate" | "isVerified" | "verifiedBy" | "verifiedAt" | "createdAt" | "updatedAt" | "createdBy" | "deletedAt"
   > {}
 
 class EmployeeDocument
@@ -42,6 +43,7 @@ class EmployeeDocument
   declare verifiedBy: string | null | undefined;
   declare verifiedAt: Date | null | undefined;
   declare readonly createdAt: Date;
+  declare readonly updatedAt: Date;
   declare createdBy: string | null | undefined;
   declare deletedAt: Date | null | undefined;
 }
@@ -114,6 +116,10 @@ EmployeeDocument.init(
     createdAt: {
       type: DataTypes.DATE,
       field: "created_at",
+    },
+    updatedAt: {
+      type: DataTypes.DATE,
+      field: "updated_at",
     },
     createdBy: {
       type: DataTypes.UUID,

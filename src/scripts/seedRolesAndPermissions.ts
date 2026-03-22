@@ -4,7 +4,7 @@
  */
 
 import { sequelize } from "../config/database";
-import { Role, Permission, RolePermission, User, UserRole } from "../models";
+import { Role, Permission, RolePermission, User, UserRole, Department } from "../models";
 import logger from "../utils/logger";
 
 const defaultRoles = [
@@ -233,16 +233,86 @@ async function seedRolesAndPermissions(): Promise<void> {
         });
 
         if (!existingUserRole) {
-          // Use a special UUID for global (non-department-scoped) roles
-          // The schema uses COALESCE with a default UUID, but we'll use a known value
-          const globalDepartmentId = "00000000-0000-0000-0000-000000000000";
+          const tenantId = user.tenantId;
+          if (!tenantId) {
+            // Should not happen for admin users, but keep seeding robust.
+            continue;
+          }
+
+          const existingDepartment = await Department.findOne({
+            where: { tenantId },
+          });
+
+          const departmentId =
+            existingDepartment?.id ||
+            (
+              await Department.create({
+                tenantId,
+                name: "Default Department",
+                code: "DEFAULT",
+                isActive: true,
+              })
+            ).id;
+
           await UserRole.create({
             userId: user.id,
             roleId: adminRole.id,
-            departmentId: globalDepartmentId,
+            // `user_roles.department_id` is part of the PK in this schema,
+            // so it must be present.
+            departmentId,
             assignedBy: null, // System assignment
           });
           logger.info(`Assigned admin role to user: ${user.email}`);
+        }
+      }
+    }
+
+    // Assign employee RBAC role to users with legacy role "employee" (portal / self-service)
+    logger.info("Assigning employee role to existing employee users...");
+    const employeeSystemRole = createdRoles["employee"];
+    if (employeeSystemRole) {
+      const employeeUsers = await User.findAll({
+        where: {
+          role: "employee",
+        },
+      });
+
+      for (const user of employeeUsers) {
+        const existingUserRole = await UserRole.findOne({
+          where: {
+            userId: user.id,
+            roleId: employeeSystemRole.id,
+          },
+        });
+
+        if (!existingUserRole) {
+          const tenantId = user.tenantId;
+          if (!tenantId) {
+            continue;
+          }
+
+          const existingDepartment = await Department.findOne({
+            where: { tenantId },
+          });
+
+          const departmentId =
+            existingDepartment?.id ||
+            (
+              await Department.create({
+                tenantId,
+                name: "Default Department",
+                code: "DEFAULT",
+                isActive: true,
+              })
+            ).id;
+
+          await UserRole.create({
+            userId: user.id,
+            roleId: employeeSystemRole.id,
+            departmentId,
+            assignedBy: null,
+          });
+          logger.info(`Assigned employee role to user: ${user.email}`);
         }
       }
     }

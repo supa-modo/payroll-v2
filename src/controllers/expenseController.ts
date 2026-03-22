@@ -462,7 +462,7 @@ export async function deleteExpense(
       },
     });
 
-    const isOwner = employee?.userId === req.user.id || expense.employeeId === req.user.id;
+    const isOwner = employee?.userId === req.user.id;
     
     if (!isOwner) {
       res.status(403).json({ error: "You can only delete your own expenses" });
@@ -525,7 +525,7 @@ export async function submitExpense(
       },
     });
 
-    const isOwner = employee?.userId === req.user.id || expense.employeeId === req.user.id;
+    const isOwner = employee?.userId === req.user.id;
     
     if (!isOwner) {
       res.status(403).json({ error: "You can only submit your own expenses" });

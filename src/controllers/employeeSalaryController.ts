@@ -14,6 +14,7 @@ import { sequelize } from "../config/database";
 import { Op } from "sequelize";
 import logger from "../utils/logger";
 import { requireTenantId } from "../utils/tenant";
+import { checkPermission } from "../middleware/rbac";
 
 /**
  * Get current salary structure for employee
@@ -152,6 +153,7 @@ export async function getEmployeeSalary(
       },
       salaryComponents: salaryComponents.map((esc) => ({
         id: esc.id,
+        salaryComponentId: esc.salaryComponentId,
         salaryComponent: esc.get("salaryComponent"),
         amount: esc.amount,
         effectiveFrom: esc.effectiveFrom,
@@ -215,6 +217,37 @@ export async function assignSalaryComponents(
       const effectiveDate =
         effectiveFrom || new Date().toISOString().split("T")[0];
 
+      // Capture previous gross before mutating any salary rows in this transaction.
+      const previousDate = new Date(effectiveDate);
+      previousDate.setDate(previousDate.getDate() - 1);
+      const previousDateStr = previousDate.toISOString().split("T")[0];
+      const previousActiveComponents = await EmployeeSalaryComponent.findAll({
+        where: {
+          employeeId,
+          effectiveFrom: { [Op.lte]: previousDateStr },
+          [Op.or]: [
+            { effectiveTo: null },
+            { effectiveTo: { [Op.gte]: previousDateStr } },
+          ],
+        },
+        include: [
+          {
+            model: SalaryComponent,
+            as: "salaryComponent",
+            required: true,
+            where: {
+              type: "earning",
+              isActive: true,
+            },
+          },
+        ],
+        transaction,
+      });
+      const previousGross = previousActiveComponents.reduce(
+        (sum, esc) => sum + parseFloat(esc.amount.toString()),
+        0
+      );
+
       // Validate all components exist and belong to tenant
       const componentIds = components.map((c: any) => c.salaryComponentId);
       const validComponents = await SalaryComponent.findAll({
@@ -234,14 +267,16 @@ export async function assignSalaryComponents(
         return;
       }
 
-      // Check for duplicate active components - prevent adding components that already exist
-      const today = new Date().toISOString().split("T")[0];
+      // Check for duplicate active components as of the assignment effective date
       const existingActiveComponents = await EmployeeSalaryComponent.findAll({
         where: {
           employeeId,
           salaryComponentId: { [Op.in]: componentIds },
-          effectiveFrom: { [Op.lte]: today },
-          [Op.or]: [{ effectiveTo: null }, { effectiveTo: { [Op.gt]: today } }],
+          effectiveFrom: { [Op.lte]: effectiveDate },
+          [Op.or]: [
+            { effectiveTo: null },
+            { effectiveTo: { [Op.gte]: effectiveDate } },
+          ],
         },
         include: [
           {
@@ -276,12 +311,10 @@ export async function assignSalaryComponents(
       const endDate = new Date(effectiveDate);
       endDate.setDate(endDate.getDate() - 1);
 
-      // First, end ANY components that have the exact same (employee_id, salary_component_id, effective_from)
-      // This prevents unique constraint violations - end ALL matching components regardless of effectiveTo status
+      // First, remove exact-date duplicates.
+      // Deleting avoids creating invalid ranges where effectiveTo < effectiveFrom.
       // componentIds is already declared above, so we reuse it
       if (componentIds.length > 0) {
-        // Delete or end ALL components with the same combination - don't filter by effectiveTo
-        // This ensures we catch components that might have been ended but still violate the unique constraint
         const duplicateComponents = await EmployeeSalaryComponent.findAll({
           where: {
             employeeId,
@@ -293,28 +326,20 @@ export async function assignSalaryComponents(
 
         if (duplicateComponents.length > 0) {
           logger.debug(
-            `Found ${duplicateComponents.length} duplicate components to end for employee ${employeeId} with effectiveFrom ${effectiveDate}`
+            `Found ${duplicateComponents.length} duplicate components to delete for employee ${employeeId} with effectiveFrom ${effectiveDate}`
           );
 
-          // End all duplicate components
-          const updatedCount = await EmployeeSalaryComponent.update(
-            {
-              effectiveTo: endDate,
-              updatedBy: req.user.id,
+          const deletedCount = await EmployeeSalaryComponent.destroy({
+            where: {
+              employeeId,
+              salaryComponentId: { [Op.in]: componentIds },
+              effectiveFrom: effectiveDate,
             },
-            {
-              where: {
-                employeeId,
-                salaryComponentId: { [Op.in]: componentIds },
-                effectiveFrom: effectiveDate,
-                // Don't filter by effectiveTo - end ALL matching components
-              },
-              transaction,
-            }
-          );
+            transaction,
+          });
 
           logger.debug(
-            `Ended ${updatedCount[0]} duplicate components for employee ${employeeId}`
+            `Deleted ${deletedCount} duplicate components for employee ${employeeId}`
           );
         }
       }
@@ -329,6 +354,7 @@ export async function assignSalaryComponents(
         {
           where: {
             employeeId,
+            salaryComponentId: { [Op.in]: componentIds },
             effectiveFrom: { [Op.lt]: effectiveDate }, // Use < instead of <= to avoid double-updating
             [Op.or]: [
               { effectiveTo: null },
@@ -418,18 +444,13 @@ export async function assignSalaryComponents(
 
       // Create salary revision history entry within transaction
       if (reason && req.user) {
-        // Calculate previous gross from existing active components before this assignment
-        const previousDate = new Date(effectiveDate);
-        previousDate.setDate(previousDate.getDate() - 1);
-        const previousDateStr = previousDate.toISOString().split("T")[0];
-
-        const previousActiveComponents = await EmployeeSalaryComponent.findAll({
+        const activeComponentsAfterAssignment = await EmployeeSalaryComponent.findAll({
           where: {
             employeeId,
-            effectiveFrom: { [Op.lte]: previousDateStr },
+            effectiveFrom: { [Op.lte]: effectiveDate },
             [Op.or]: [
               { effectiveTo: null },
-              { effectiveTo: { [Op.gt]: previousDateStr } },
+              { effectiveTo: { [Op.gte]: effectiveDate } },
             ],
           },
           include: [
@@ -446,20 +467,10 @@ export async function assignSalaryComponents(
           transaction,
         });
 
-        const previousGross = previousActiveComponents.reduce(
+        const newGross = activeComponentsAfterAssignment.reduce(
           (sum, esc) => sum + parseFloat(esc.amount.toString()),
           0
         );
-
-        // Calculate new gross from the components being assigned
-        const newGross = components
-          .filter((c: any) => {
-            const comp = validComponents.find(
-              (vc) => vc.id === c.salaryComponentId
-            );
-            return comp && comp.type === "earning" && comp.isActive;
-          })
-          .reduce((sum: number, c: any) => sum + parseFloat(c.amount || 0), 0);
 
         // Calculate change percentage
         const changePercentage =
@@ -525,7 +536,22 @@ export async function getSalaryRevisionHistory(
     }
     const tenantId = requireTenantId(req);
 
-    const { employeeId } = req.params;
+    let { employeeId } = req.params;
+
+    // Self-service handling:
+    // If a user has `employee:read:self` and is requesting their own employee record,
+    // resolve that employee id from their linked profile. If no linked profile exists,
+    // continue with the URL employeeId instead of returning 404.
+    const canViewSelf = await checkPermission(req, "employee:read:self");
+    if (canViewSelf) {
+      const selfEmployee = await Employee.findOne({
+        where: { userId: req.user.id, tenantId },
+      });
+
+      if (selfEmployee && employeeId === selfEmployee.id) {
+        employeeId = selfEmployee.id;
+      }
+    }
 
     // Verify employee belongs to tenant
     const employee = await Employee.findOne({
@@ -566,6 +592,56 @@ export async function getSalaryRevisionHistory(
     res.json({ revisions: formattedRevisions });
   } catch (error: any) {
     logger.error("Get salary revision history error:", error);
+    res.status(500).json({ error: "Failed to get salary revision history" });
+  }
+}
+
+/**
+ * Salary revision history for the authenticated user’s linked employee (member portal).
+ */
+export async function getMySalaryRevisionHistory(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    const tenantId = requireTenantId(req);
+
+    const employee = await Employee.findOne({
+      where: { userId: req.user.id, tenantId },
+    });
+
+    if (!employee) {
+      res.status(404).json({ error: "Employee profile not found for this user" });
+      return;
+    }
+
+    const revisions = await SalaryRevisionHistory.findAll({
+      where: { employeeId: employee.id },
+      include: [
+        {
+          model: Employee,
+          as: "employee",
+          attributes: ["id", "firstName", "lastName", "employeeNumber"],
+        },
+      ],
+      order: [["revisionDate", "DESC"]],
+    });
+
+    const formattedRevisions = revisions.map((rev) => ({
+      ...rev.toJSON(),
+      previousGross: Number(rev.previousGross) || 0,
+      newGross: Number(rev.newGross) || 0,
+      changePercentage:
+        rev.changePercentage != null ? Number(rev.changePercentage) : null,
+    }));
+
+    res.json({ revisions: formattedRevisions });
+  } catch (error: any) {
+    logger.error("Get my salary revision history error:", error);
     res.status(500).json({ error: "Failed to get salary revision history" });
   }
 }
@@ -627,7 +703,7 @@ export async function createSalaryRevision(
           effectiveFrom: { [Op.lte]: previousDateStr },
           [Op.or]: [
             { effectiveTo: null },
-            { effectiveTo: { [Op.gt]: previousDateStr } }, // Use > instead of >= for consistency
+            { effectiveTo: { [Op.gte]: previousDateStr } },
           ],
         },
         include: [
@@ -745,8 +821,6 @@ export async function createSalaryRevision(
 
         // Create new components - handle duplicates by ending existing ones first
         const userId = req.user.id;
-        const endDate = new Date(effectiveFrom);
-        endDate.setDate(endDate.getDate() - 1);
 
         let createdCount = 0;
 
@@ -762,19 +836,9 @@ export async function createSalaryRevision(
           });
 
           if (existing) {
-            // End the existing component first
-            await EmployeeSalaryComponent.update(
-              {
-                effectiveTo: endDate,
-                updatedBy: userId,
-              },
-              {
-                where: { id: existing.id },
-                transaction,
-              }
-            );
+            await existing.destroy({ transaction });
             logger.debug(
-              `Ended existing component ${existing.id} before creating new one for employee ${employeeId}, salaryComponent ${comp.salaryComponentId}`
+              `Deleted existing same-date component ${existing.id} before creating new one for employee ${employeeId}, salaryComponent ${comp.salaryComponentId}`
             );
           }
 

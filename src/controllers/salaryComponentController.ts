@@ -213,22 +213,24 @@ export async function updateSalaryComponent(
       }
     }
 
-    await component.update({
-      name,
-      code,
-      type,
-      category,
-      calculationType,
-      defaultAmount,
-      percentageOf,
-      percentageValue,
-      isTaxable,
-      isStatutory,
-      statutoryType,
-      isActive,
-      displayOrder,
+    const updates: Record<string, any> = {
       updatedBy: req.user.id,
-    });
+    };
+    if (name !== undefined) updates.name = name;
+    if (code !== undefined) updates.code = code;
+    if (type !== undefined) updates.type = type;
+    if (category !== undefined) updates.category = category;
+    if (calculationType !== undefined) updates.calculationType = calculationType;
+    if (defaultAmount !== undefined) updates.defaultAmount = defaultAmount;
+    if (percentageOf !== undefined) updates.percentageOf = percentageOf;
+    if (percentageValue !== undefined) updates.percentageValue = percentageValue;
+    if (isTaxable !== undefined) updates.isTaxable = isTaxable;
+    if (isStatutory !== undefined) updates.isStatutory = isStatutory;
+    if (statutoryType !== undefined) updates.statutoryType = statutoryType;
+    if (isActive !== undefined) updates.isActive = isActive;
+    if (displayOrder !== undefined) updates.displayOrder = displayOrder;
+
+    await component.update(updates);
 
     res.json({ component });
   } catch (error: any) {
@@ -279,9 +281,12 @@ export async function deleteSalaryComponent(
       return;
     }
 
-    await component.destroy();
+    await component.update({
+      isActive: false,
+      updatedBy: req.user.id,
+    });
 
-    res.json({ message: "Salary component deleted successfully" });
+    res.json({ message: "Salary component deactivated successfully" });
   } catch (error: any) {
     logger.error("Delete salary component error:", error);
     res.status(500).json({ error: "Failed to delete salary component" });

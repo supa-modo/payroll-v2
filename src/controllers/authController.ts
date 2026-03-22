@@ -10,6 +10,7 @@ import logger from "../utils/logger";
 import { createTenantAdminRole } from "../seeders/rolesAndPermissions";
 import { requireTenantId } from "../utils/tenant";
 import crypto from "crypto";
+import { loadUserRolesAndPermissions } from "../middleware/rbac";
 
 /**
  * Register a new tenant and admin user
@@ -273,9 +274,18 @@ export async function login(req: AuthRequest, res: Response): Promise<void> {
       email: user.email,
     });
 
+    const loaded =
+      !user.isSystemAdmin && user.tenantId
+        ? await loadUserRolesAndPermissions(user.id, user.tenantId)
+        : { roles: [], permissions: [] };
+
     res.json({
       message: "Login successful",
-      user: user.toJSON(),
+      user: {
+        ...user.toJSON(),
+        roles: loaded.roles,
+        permissions: loaded.permissions,
+      },
       ...tokens,
     });
   } catch (error: any) {
@@ -354,8 +364,17 @@ export async function getCurrentUser(
       return;
     }
 
+    const loaded =
+      !user.isSystemAdmin && user.tenantId
+        ? await loadUserRolesAndPermissions(user.id, user.tenantId)
+        : { roles: [], permissions: [] };
+
     res.json({
-      user: user.toJSON(),
+      user: {
+        ...user.toJSON(),
+        roles: loaded.roles,
+        permissions: loaded.permissions,
+      },
     });
   } catch (error: any) {
     logger.error("Get current user error:", error);

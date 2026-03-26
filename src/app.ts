@@ -44,6 +44,7 @@ import settingsRoutes from "./routes/settings";
 import dataChangeHistoryRoutes from "./routes/dataChangeHistory";
 import salaryReliefRoutes from "./routes/salaryReliefs";
 import meRoutes from "./routes/me";
+import dashboardRoutes from "./routes/dashboard";
 
 /**
  * Create and configure Express application
@@ -140,6 +141,7 @@ export function createApp(): Application {
   // Route handlers
   app.use("/api/auth", authRoutes);
   app.use("/api/me", meRoutes);
+  app.use("/api/dashboard", dashboardRoutes);
   app.use("/api/departments", departmentRoutes);
   app.use("/api/employees", employeeRoutes);
   app.use("/api/roles", roleRoutes);

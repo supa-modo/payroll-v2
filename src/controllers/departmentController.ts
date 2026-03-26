@@ -23,7 +23,7 @@ export async function getDepartments(
     }
 
     const tenantId = requireTenantId(req);
-    const { search } = req.query;
+    const { search, page = 1, limit = 30 } = req.query;
 
     // Build where clause for search
     let whereClause: any = { tenantId };
@@ -85,8 +85,10 @@ export async function getDepartments(
       }
     }
 
+    const offset = (Number(page) - 1) * Number(limit);
+
     // Optimize: Get departments with manager and parent, but get employee count separately
-    const departments = await Department.findAll({
+    const { rows: departments, count } = await Department.findAndCountAll({
       where: whereClause,
       include: [
         {
@@ -102,6 +104,8 @@ export async function getDepartments(
           required: false,
         },
       ],
+      limit: Number(limit),
+      offset,
       order: [["name", "ASC"]],
     });
 
@@ -135,7 +139,25 @@ export async function getDepartments(
       });
     }
 
-    res.json({ departments });
+    const [activeDepartments, inactiveDepartments] = await Promise.all([
+      Department.count({ where: { tenantId, isActive: true } }),
+      Department.count({ where: { tenantId, isActive: false } }),
+    ]);
+
+    const totalEmployees = await Employee.count({ where: { tenantId } });
+
+    res.json({
+      departments,
+      stats: {
+        totalDepartments: count,
+        totalEmployees,
+        activeDepartments,
+        inactiveDepartments,
+      },
+      total: count,
+      totalPages: Math.ceil(count / Number(limit)),
+      currentPage: Number(page),
+    });
   } catch (error: any) {
     logger.error("Get departments error:", error);
     res.status(500).json({ error: "Failed to get departments" });

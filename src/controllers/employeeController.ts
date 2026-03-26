@@ -39,11 +39,21 @@ export async function getEmployees(
     }
 
     const tenantId = requireTenantId(req);
-    const { search, departmentId, status, page = 1, limit = 30 } = req.query;
+    const {
+      search,
+      departmentId,
+      status,
+      employmentType,
+      sortField = "createdAt",
+      sortDir = "desc",
+      page = 1,
+      limit = 30,
+    } = req.query;
 
     const whereClause: any = { tenantId };
     if (departmentId) whereClause.departmentId = departmentId;
     if (status) whereClause.status = status;
+    if (employmentType) whereClause.employmentType = employmentType;
 
     if (search) {
       whereClause[Op.or] = [
@@ -60,6 +70,24 @@ export async function getEmployees(
 
     const offset = (Number(page) - 1) * Number(limit);
 
+    const sortableFields = new Set([
+      "createdAt",
+      "firstName",
+      "lastName",
+      "employeeNumber",
+      "status",
+      "hireDate",
+      "employmentType",
+    ]);
+    const safeSortField =
+      typeof sortField === "string" && sortableFields.has(sortField)
+        ? sortField
+        : "createdAt";
+    const safeSortDir =
+      typeof sortDir === "string" && sortDir.toLowerCase() === "asc"
+        ? "ASC"
+        : "DESC";
+
     const { count, rows: employees } = await Employee.findAndCountAll({
       where: whereClause,
       include: [
@@ -72,7 +100,7 @@ export async function getEmployees(
       ],
       limit: Number(limit),
       offset,
-      order: [["createdAt", "DESC"]],
+      order: [[safeSortField, safeSortDir]],
     });
 
     res.json({
